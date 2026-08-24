@@ -2,10 +2,10 @@
 
 Legal assistant with RAG and agentic AI — a portfolio project for a legal-firm internship.
 
-LexBot ingests a firm's knowledge base (policies, FAQs, contract glossaries), answers legal questions grounded in those documents, searches case records, and registers follow-ups. The project is built incrementally: **Milestone 1** delivered the ingestion pipeline, **Milestone 2** adds the conversational agent and API, **Milestone 3** adds the React chat UI; later milestones add n8n integration and production deployment.
+LexBot ingests a firm's knowledge base (policies, FAQs, contract glossaries), answers legal questions grounded in those documents, searches case records, and registers follow-ups. The project is built incrementally: **Milestone 1** delivered the ingestion pipeline, **Milestone 2** adds the conversational agent and API, **Milestone 3** adds the React chat UI, **Milestone 4** bridges the agent to WhatsApp through n8n; later milestones add production deployment.
 
 > [!NOTE]
-> Current status: **Milestones 1–3 complete** — ingestion pipeline (chunk → embed → ChromaDB), LangGraph agent with 4 tools, FastAPI surface, PostgreSQL schema, and a React 18 chat UI (Vite + Tailwind). 79 passing tests (13 ingest, 26 agent, 10 api, 30 ui).
+> Current status: **Milestones 1–4 complete** — ingestion pipeline (chunk → embed → ChromaDB), LangGraph agent with 4 tools, FastAPI surface, PostgreSQL schema, React 18 chat UI (Vite + Tailwind), and an n8n WhatsApp bridge (outbound notify + inbound receive with Meta webhook verification). 79 passing tests (13 ingest, 26 agent, 10 api, 30 ui).
 
 ## Features
 
@@ -16,6 +16,7 @@ LexBot ingests a firm's knowledge base (policies, FAQs, contract glossaries), an
 - **LangGraph agent** — intent classification, tool dispatch, and answer composition with source citations
 - **4 agent tools** — `retrieve_knowledge` (ChromaDB), `search_case` (PostgreSQL), `register_follow_up` (PostgreSQL), `notify_whatsapp` (webhook stub)
 - **FastAPI surface** — `POST /chat`, `POST /ingest`, `GET /health`
+- **n8n WhatsApp bridge** — outbound webhook sends agent `notify_whatsapp` calls to Meta; inbound webhook verifies Meta's challenge and routes messages through `POST /chat`
 - **Hermetic tests** — Fake embedder + scripted FakeLLM keep the suite offline and deterministic
 
 ## Architecture
@@ -47,8 +48,10 @@ ingest/ → agent/ → api/ → ui/ → n8n/ → db/ → infra/
 | `db/` | Idempotent PostgreSQL schema (`cases`, `follow_ups`) |
 | `docs/knowledge/` | Seed knowledge documents (policies, FAQ, glossary) |
 | `docs/superpowers/` | Design spec and Milestone 1 implementation plan |
-| `docker-compose.yml` | PostgreSQL (pgvector) + API service |
-| `.env.example` | Environment template (providers, API keys, database) |
+| `n8n/` | WhatsApp bridge workflow exports (outbound + inbound), re-importable |
+| `scripts/demo-whatsapp.sh` | One-shot demo: brings the stack up and sends a real WhatsApp message |
+| `docker-compose.yml` | PostgreSQL (pgvector) + API + n8n services |
+| `.env.example` | Environment template (providers, API keys, database, WhatsApp) |
 
 ## Getting started
 
@@ -121,6 +124,62 @@ cd ui && npm test       # vitest — 30 tests
 cd ui && npm run build  # tsc -b + vite build
 ```
 
+### 4. WhatsApp bridge (n8n)
+
+n8n is a pure bridge between the Meta WhatsApp Cloud API and LexBot's existing contracts: the agent's `notify_whatsapp` tool POSTs `{phone, message}` to the n8n outbound webhook, and the inbound webhook receives WhatsApp messages and routes them through `POST /chat`. No agent/API code changes were needed.
+
+```mermaid
+flowchart LR
+    A[User WhatsApp] -->|POST webhook| N1[n8n inbound]
+    N1 -->|GET challenge echo| A
+    N1 -->|POST /chat| B[FastAPI /chat]
+    B -->|answer| N1
+    N1 -->|send reply| A
+    AG[Agent] -->|notify_whatsapp POST| N2[n8n outbound]
+    N2 -->|send message| A
+```
+
+#### Env vars
+
+| Variable | Where to set it | Empty behavior |
+|---|---|---|
+| `WHATSAPP_TOKEN` | repo-root `.env` (template: `.env.example`) | Meta send returns 400 (execution error, visible in the n8n UI) |
+| `WHATSAPP_PHONE_NUMBER_ID` | repo-root `.env` | Same |
+| `WHATSAPP_VERIFY_TOKEN` | repo-root `.env` | Meta webhook verification challenge is rejected |
+| `N8N_WEBHOOK_URL` | repo-root `.env` | `notify_whatsapp` returns `{"status":"stub"}` (no real send) |
+
+`N8N_WEBHOOK_URL` takes one of two values depending on the caller:
+
+- api container (in-network): `http://n8n:5678/webhook/outbound-whatsapp`
+- host runs (scripts/tests): `http://localhost:5679/webhook/outbound-whatsapp`
+
+> [!NOTE]
+> Port **5679** is the host port for n8n (container 5678) — 5678 stays free for other n8n instances. The workflows read Meta credentials only via `{{ $env.WHATSAPP_* }}`; no credential UI configuration is needed.
+
+#### Start + import workflows
+
+```bash
+docker compose up -d            # starts db, api, n8n (healthcheck on :5679/healthz)
+docker compose exec n8n n8n import:workflow --separate --input=/home/node/workflows/
+docker compose restart n8n      # re-register webhooks from the imported workflow state
+```
+
+The imports live in `n8n/` (`outbound-whatsapp.json`, `inbound-whatsapp.json`) and mount read-only at `/home/node/workflows`.
+
+#### Verify the bridge without Meta
+
+```bash
+# outbound: webhook answers 200 {"status":"sent"} immediately
+curl -X POST localhost:5679/webhook/outbound-whatsapp \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"+1234567890","message":"hi"}'
+
+# inbound: Meta verification handshake echoes the challenge only for a valid token
+curl "localhost:5679/webhook/inbound-whatsapp?hub.mode=subscribe&hub.verify_token=$WHATSAPP_VERIFY_TOKEN&hub.challenge=12345"
+```
+
+`scripts/demo-whatsapp.sh` automates the full stack bring-up and a real outbound send once `WHATSAPP_*` credentials are set.
+
 ### Run the tests
 
 ```bash
@@ -143,14 +202,14 @@ cd api    && python -m pytest tests/ -v    # 10 tests
 | CLI | argparse |
 | Tests | pytest |
 | Frontend | React 18 + Vite + Tailwind CSS |
-| Orchestration (planned) | n8n, AWS CDK |
+| Orchestration | n8n (WhatsApp bridge), AWS CDK (planned) |
 
 ## Roadmap
 
 - [x] **Milestone 1** — Scaffold + ingestion pipeline
 - [x] **Milestone 2** — Agent + API (LangGraph, FastAPI)
 - [x] **Milestone 3** — Web UI (React 18 + Vite)
-- [ ] **Milestone 4** — n8n + WhatsApp integration
+- [x] **Milestone 4** — n8n + WhatsApp integration
 - [ ] **Milestone 5** — Production deployment (AWS CDK)
 
 ## Documentation
