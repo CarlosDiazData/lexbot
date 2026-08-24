@@ -1,14 +1,18 @@
-import type { ChatMessage } from "../hooks/useChat";
+import type { ChatError, ChatMessage } from "../hooks/useChat";
+import ErrorBubble from "./ErrorBubble";
 import MessageBubble from "./MessageBubble";
 
 interface ChatWindowProps {
   messages: ChatMessage[];
+  error: ChatError | null;
+  onRetry: () => void;
 }
 
 // UI-6: with no messages the window shows an empty-state prompt; the first
 // message replaces it (the prompt branch is not rendered once messages exist).
-export default function ChatWindow({ messages }: ChatWindowProps) {
-  if (messages.length === 0) {
+// UI-3/UI-4: a stored error renders an error bubble after the message list.
+export default function ChatWindow({ messages, error, onRetry }: ChatWindowProps) {
+  if (messages.length === 0 && error === null) {
     return (
       <div
         data-testid="empty-state"
@@ -24,6 +28,7 @@ export default function ChatWindow({ messages }: ChatWindowProps) {
       {messages.map((message) => (
         <MessageBubble key={message.id} message={message} />
       ))}
+      {error !== null && <ErrorBubble error={error} onRetry={onRetry} />}
     </div>
   );
 }
