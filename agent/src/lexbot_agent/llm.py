@@ -5,13 +5,16 @@ langchain-core chat model wrapper. FakeLLM lives here exactly like
 FakeEmbedder lives in ingest's embeddings.py — test-only, deterministic.
 """
 
+import logging
 import os
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -58,8 +61,26 @@ def build_llm(provider: str | None = None) -> BaseChatModel:
     provider = provider or os.getenv("LLM_PROVIDER", "gemini")
     model = os.getenv("LLM_MODEL")
     if provider == "gemini":
-        return ChatGoogleGenerativeAI(model=model or DEFAULT_GEMINI_MODEL, temperature=0)
+        # ChatGoogleGenerativeAI reads GOOGLE_API_KEY by default, but the
+        # project documents GEMINI_API_KEY (same key, new-genai SDK name).
+        # Accept either and pass it explicitly so the documented .env works.
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            logger.warning(
+                "LLM_PROVIDER=gemini but GEMINI_API_KEY/GOOGLE_API_KEY is unset — falling "
+                "back to FakeLLM (deterministic decline; set GEMINI_API_KEY for real answers)"
+            )
+            return FakeLLM(responses=[AIMessage(content="")])
+        return ChatGoogleGenerativeAI(
+            model=model or DEFAULT_GEMINI_MODEL, temperature=0, google_api_key=api_key
+        )
     if provider == "openai":
+        if not os.getenv("OPENAI_API_KEY"):
+            logger.warning(
+                "LLM_PROVIDER=openai but OPENAI_API_KEY is unset — falling back to FakeLLM "
+                "(deterministic decline; set OPENAI_API_KEY for real answers)"
+            )
+            return FakeLLM(responses=[AIMessage(content="")])
         return ChatOpenAI(model=model or DEFAULT_OPENAI_MODEL, temperature=0)
     if provider == "fake":
         return FakeLLM(responses=[])

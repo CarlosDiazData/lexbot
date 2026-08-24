@@ -1,8 +1,11 @@
+import logging
 import os
 from abc import ABC, abstractmethod
 
 from google import genai
 from openai import OpenAI
+
+logger = logging.getLogger(__name__)
 
 
 class Embedder(ABC):
@@ -56,8 +59,20 @@ class GeminiEmbedder(Embedder):
 def build_embedder(provider: str | None = None) -> Embedder:
     provider = provider or os.getenv("EMBEDDING_PROVIDER", "gemini")
     if provider == "openai":
+        if not os.getenv("OPENAI_API_KEY"):
+            logger.warning(
+                "EMBEDDING_PROVIDER=openai but OPENAI_API_KEY is unset — falling back to "
+                "FakeEmbedder (dev posture; set OPENAI_API_KEY for real embeddings)"
+            )
+            return FakeEmbedder()
         return OpenAIEmbedder()
     if provider == "gemini":
+        if not os.getenv("GEMINI_API_KEY"):
+            logger.warning(
+                "EMBEDDING_PROVIDER=gemini but GEMINI_API_KEY is unset — falling back to "
+                "FakeEmbedder (dev posture; set GEMINI_API_KEY for real embeddings)"
+            )
+            return FakeEmbedder()
         return GeminiEmbedder()
     if provider == "fake":
         return FakeEmbedder()

@@ -28,6 +28,14 @@ services:
     volumes:
       # ChromaDB persistence shared with the host (ingest CLI default ./data/chroma)
       - ./data/chroma:/app/data/chroma
+    env_file:
+      # Forward embedding credentials (EMBEDDING_PROVIDER / GEMINI_API_KEY /
+      # OPENAI_API_KEY) from .env into the container. .env is gitignored;
+      # .env.example documents the vars. required: false keeps compose working
+      # on hosts with no .env (fresh clone / CI). Explicit environment: entries
+      # below override env_file values (e.g. DATABASE_URL stays db:5432).
+      - path: .env
+        required: false
     environment:
       # From .env when present (compose auto-loads it); fallbacks match the
       # code defaults in agent/src/lexbot_agent/{llm,tools}.py
