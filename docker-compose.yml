@@ -1,0 +1,14 @@
+services:
+  db:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_USER: lexbot
+      POSTGRES_PASSWORD: lexbot
+      POSTGRES_DB: lexbot
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+volumes:
+  db-data:
