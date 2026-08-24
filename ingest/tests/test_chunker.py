@@ -23,3 +23,8 @@ def test_invalid_sizes_raise():
 
     with pytest.raises(ValueError):
         chunk_text("x" * 10, source="a.md", chunk_size=100, overlap=100)
+
+
+def test_blank_text_yields_no_chunks():
+    assert chunk_text("", source="a.md") == []
+    assert chunk_text("   \n\t  ", source="a.md") == []
