@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment — never commit real env values.
+# ui/.env.example is the committed template (Vite reads env only from the Vite project root).
+.env
+.env.*
+!.env.example
