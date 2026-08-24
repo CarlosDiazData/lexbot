@@ -48,5 +48,35 @@ services:
       # to enable the httpx POST path.
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
 
+  # n8n: pure WhatsApp bridge between the agent/API contracts and the Meta
+  # WhatsApp Cloud API. Standalone by design — no depends_on on db/api: the
+  # inbound workflow reaches the api over the compose network at http://api:8000.
+  n8n:
+    image: n8nio/n8n:2.35.7
+    ports:
+      # Host 5679 → container 5678: keeps 5678 free for n8n-ops-hub.
+      - "5679:5678"
+    env_file:
+      # Same pattern as api: forward WHATSAPP_* from .env into the container.
+      # required: false keeps compose working without .env (fresh clone / CI).
+      # NOTE: N8N_WEBHOOK_URL is deliberately NOT forwarded here — it is also
+      # an n8n-native env var (webhook base URL behind a reverse proxy) and
+      # would corrupt n8n's webhook URLs when set. The agent's outbound URL is
+      # consumed only by the api service above.
+      - path: .env
+        required: false
+    volumes:
+      # n8n instance data (workflows, credentials metadata) persists across restarts.
+      - n8n_data:/home/node/.n8n
+      # Read-only import dir: `docker compose exec n8n n8n import:workflow --input=/home/node/workflows/*.json`
+      - ./n8n:/home/node/workflows:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
 volumes:
   db-data:
+  n8n_data:
