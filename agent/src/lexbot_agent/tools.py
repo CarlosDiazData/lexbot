@@ -1,12 +1,22 @@
 """Agent tools. TOOL-5 contract: every tool returns structured JSON (a dict),
 never free text — ToolNode wraps the dict into a JSON ToolMessage.
 
-WU2 ships retrieve_knowledge (TOOL-1). build_tools is a factory so tests can
-inject a tmp Chroma store + FakeEmbedder (design D4 DI pattern).
+WU2 shipped retrieve_knowledge (TOOL-1); WU3 adds search_case (TOOL-2),
+register_follow_up (TOOL-3) and notify_whatsapp (TOOL-4). build_tools is a
+factory so tests can inject a tmp Chroma store + FakeEmbedder and a fake
+Database / httpx transport (design D4 DI pattern).
+
+The SQL tools talk to PostgreSQL through the Database class — the single
+testable seam. Production connects via DATABASE_URL; tests inject a duck-typed
+fake whose methods raise real psycopg exceptions. DB failures are translated
+to error JSON (TOOL-5) so the agent answers gracefully instead of crashing.
 """
 
+import os
 from pathlib import Path
 
+import httpx
+import psycopg
 from langchain_core.tools import tool
 
 from lexbot_ingest.chunker import chunk_text
@@ -17,6 +27,70 @@ from lexbot_ingest.vector_store import VectorStore
 DEFAULT_KNOWLEDGE_DIR = Path(__file__).resolve().parents[3] / "docs" / "knowledge"
 
 RETRIEVAL_TOP_K = 3
+
+# Matches the compose db service (docker-compose.yml) and db/init.sql DDL.
+DEFAULT_DATABASE_URL = "postgresql://lexbot:lexbot@localhost:5432/lexbot"
+
+
+class CaseNotFoundError(Exception):
+    """register_follow_up referenced a case_number that does not exist."""
+
+
+class Database:
+    """psycopg3 access layer for the SQL tools (TOOL-2, TOOL-3).
+
+    `_connect` is the only seam: production opens a connection from DATABASE_URL,
+    tests monkeypatch it or inject a duck-typed fake db into build_tools. All
+    methods raise psycopg.Error on failure — the tools translate that into
+    error JSON so the graph continues (TOOL-5, DB-down scenario).
+    """
+
+    def __init__(self, dsn: str | None = None):
+        self.dsn = dsn or os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+
+    def _connect(self):
+        return psycopg.connect(self.dsn)
+
+    def search_cases(self, query: str) -> list[dict]:
+        """Case rows matching case_number or client_name (case-insensitive)."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT case_number, client_name, status, summary "
+                    "FROM cases "
+                    "WHERE case_number ILIKE %s OR client_name ILIKE %s "
+                    "ORDER BY id LIMIT 10",
+                    (f"%{query}%", f"%{query}%"),
+                )
+                return [
+                    {
+                        "case_number": row[0],
+                        "client_name": row[1],
+                        "status": row[2],
+                        "summary": row[3],
+                    }
+                    for row in cur.fetchall()
+                ]
+
+    def insert_follow_up(
+        self, case_number: str, description: str, due_date: str | None
+    ) -> int:
+        """Insert a follow_ups row for the case identified by case_number and
+        return its new id. Raises CaseNotFoundError for unknown case numbers.
+        The connection context manager commits the INSERT on success.
+        """
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM cases WHERE case_number = %s", (case_number,))
+                case = cur.fetchone()
+                if case is None:
+                    raise CaseNotFoundError(case_number)
+                cur.execute(
+                    "INSERT INTO follow_ups (case_id, description, due_date) "
+                    "VALUES (%s, %s, %s) RETURNING id",
+                    (case[0], description, due_date),
+                )
+                return cur.fetchone()[0]
 
 
 def seed_knowledge(store: VectorStore, docs_dir: Path) -> int:
@@ -35,13 +109,21 @@ def seed_knowledge(store: VectorStore, docs_dir: Path) -> int:
 def build_tools(
     store: VectorStore,
     docs_dir: Path | None = None,
+    db: Database | None = None,
+    http_client: httpx.Client | None = None,
+    webhook_url: str | None = None,
 ) -> list:
-    """Build the tool list bound to a concrete store.
+    """Build the tool list bound to concrete store / db / http dependencies.
 
     docs_dir overrides the auto-seed source (defaults to docs/knowledge);
-    tests pass an empty dir to exercise the empty-retrieval path.
+    tests pass an empty dir to exercise the empty-retrieval path. db defaults
+    to Database() (DATABASE_URL); http_client defaults to a real httpx.Client;
+    webhook_url defaults to the N8N_WEBHOOK_URL env var.
     """
     knowledge_dir = docs_dir or DEFAULT_KNOWLEDGE_DIR
+    database = db or Database()
+    client = http_client or httpx.Client()
+    notify_url = webhook_url if webhook_url is not None else os.getenv("N8N_WEBHOOK_URL")
 
     @tool
     def retrieve_knowledge(query: str) -> dict:
@@ -68,4 +150,70 @@ def build_tools(
             ]
         }
 
-    return [retrieve_knowledge]
+    @tool
+    def search_case(query: str) -> dict:
+        """Search case files by case number or client name. Returns matching
+        cases with their status and summary. Use when the user asks about a
+        specific case or client matter."""
+        try:
+            cases = database.search_cases(query)
+        except psycopg.Error as exc:
+            # TOOL-5: DB down -> error JSON; the agent answers gracefully.
+            return {
+                "error": {
+                    "code": "db_unavailable",
+                    "message": f"Case search unavailable: {exc}",
+                    "retryable": True,
+                }
+            }
+        return {"cases": cases}
+
+    @tool
+    def register_follow_up(
+        case_number: str, description: str, due_date: str | None = None
+    ) -> dict:
+        """Register a follow-up task on a case. Use when the user asks to
+        schedule a reminder or follow-up for a client matter."""
+        try:
+            new_id = database.insert_follow_up(case_number, description, due_date)
+        except CaseNotFoundError:
+            return {
+                "error": {
+                    "code": "case_not_found",
+                    "message": f"No case with number {case_number}",
+                    "retryable": False,
+                }
+            }
+        except psycopg.Error as exc:
+            return {
+                "error": {
+                    "code": "db_unavailable",
+                    "message": f"Follow-up registration unavailable: {exc}",
+                    "retryable": True,
+                }
+            }
+        return {"id": new_id}
+
+    @tool
+    def notify_whatsapp(phone: str, message: str) -> dict:
+        """Notify a human via WhatsApp through the n8n webhook (D7 stub). When
+        no N8N_WEBHOOK_URL is configured this is a no-op so flows still work
+        in dev; no real WhatsApp send ever happens here."""
+        if not notify_url:
+            return {"status": "stub"}
+        try:
+            response = client.post(
+                notify_url, json={"phone": phone, "message": message}, timeout=10.0
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            return {
+                "error": {
+                    "code": "webhook_unreachable",
+                    "message": f"WhatsApp notify unavailable: {exc}",
+                    "retryable": True,
+                }
+            }
+        return {"status": "sent"}
+
+    return [retrieve_knowledge, search_case, register_follow_up, notify_whatsapp]
