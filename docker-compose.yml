@@ -10,6 +10,35 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lexbot -d lexbot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # ChromaDB persistence shared with the host (ingest CLI default ./data/chroma)
+      - ./data/chroma:/app/data/chroma
+    environment:
+      # From .env when present (compose auto-loads it); fallbacks match the
+      # code defaults in agent/src/lexbot_agent/{llm,tools}.py
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      LLM_MODEL: ${LLM_MODEL:-gemini-2.0-flash}
+      # Container network: the db service host, NOT host localhost. Not
+      # interpolated on purpose — a localhost URL can never reach PG from here.
+      DATABASE_URL: postgresql://lexbot:lexbot@db:5432/lexbot
+      # Empty = notify_whatsapp stub mode (D7); set to a real n8n webhook URL
+      # to enable the httpx POST path.
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
 
 volumes:
   db-data:
