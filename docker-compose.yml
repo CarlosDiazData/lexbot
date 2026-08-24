@@ -65,6 +65,12 @@ services:
       # consumed only by the api service above.
       - path: .env
         required: false
+    environment:
+      # n8n >= 2.x blocks $env access inside workflow expressions by default
+      # (N8N_BLOCK_ENV_ACCESS_IN_NODE unset = blocked). The bridge workflows
+      # read Meta credentials ONLY via {{ $env.WHATSAPP_* }} (WB-5), so env
+      # access must be explicitly allowed.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
     volumes:
       # n8n instance data (workflows, credentials metadata) persists across restarts.
       - n8n_data:/home/node/.n8n

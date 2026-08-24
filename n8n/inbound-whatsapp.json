@@ -1,0 +1,334 @@
+{
+  "name": "WhatsApp Bridge - Inbound (Meta to /chat reply)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET,POST",
+        "path": "inbound-whatsapp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "6c9d8e7f-0a1b-4c2d-8e3f-4a5b6c7d8e9f",
+      "webhookId": "9d521779-382b-4194-adeb-bc7367f52e1f",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-480, 280]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "7dae9f80-1b2c-4d3e-9f4a-5b6c7d8e9f0a",
+              "leftValue": "={{ $json.query[\"hub.mode\"] }}",
+              "rightValue": "subscribe",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "8ebf0a91-2c3d-4e4f-a05b-6c7d8e9f0a1b",
+              "leftValue": "={{ $json.query[\"hub.verify_token\"] }}",
+              "rightValue": "={{ $env.WHATSAPP_VERIFY_TOKEN }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9fc0ab12-3d4e-4f5a-b16c-7d8e9f0a1b2c",
+      "name": "Verify Token",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [-220, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.query[\"hub.challenge\"] }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "a0d1bc23-4e5f-4a6b-c27d-8e9f0a1b2c3d",
+      "name": "Respond Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [40, 120]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"received\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "b1e2cd34-5f6a-4b7c-d38e-9f0a1b2c3d4e",
+      "name": "Respond Received",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [40, 440]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://api:8000/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"{{ $json.body.entry[0].changes[0].value.messages[0].text.body }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "c2f3de45-6a7b-4c8d-e49f-0a1b2c3d4e5f",
+      "name": "Ask API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 440]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "d304ef56-7b8c-4d9e-f5a0-1b2c3d4e5f6a",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "gte",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "e415f067-8c9d-4eaf-a6b1-2c3d4e5f6a7b",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 299,
+              "operator": {
+                "type": "number",
+                "operation": "lte",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f526a178-9dae-4fba-b7c2-3d4e5f6a7b8c",
+      "name": "Is 2xx",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [620, 440]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a637b289-0ebf-4acb-c8d3-4e5f6a7b8c9d",
+              "name": "to",
+              "value": "={{ $('Webhook').first().json.body.entry[0].changes[0].value.messages[0].from }}",
+              "type": "stringValue"
+            },
+            {
+              "id": "b748c39a-1fc0-4bdc-d9e4-5f6a7b8c9d0e",
+              "name": "phone_number_id",
+              "value": "={{ $('Webhook').first().json.body.entry[0].changes[0].value.metadata.phone_number_id }}",
+              "type": "stringValue"
+            },
+            {
+              "id": "c859d4ab-2ad1-4ced-eaf5-6a7b8c9d0e1f",
+              "name": "text",
+              "value": "={{ $json.body.answer }}",
+              "type": "stringValue"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d96ae5bc-3be2-4dfe-fb06-7b8c9d0e1f2a",
+      "name": "Set Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ea7bf6cd-4cf3-4eaf-ac17-8c9d0e1f2a3b",
+              "name": "to",
+              "value": "={{ $('Webhook').first().json.body.entry[0].changes[0].value.messages[0].from }}",
+              "type": "stringValue"
+            },
+            {
+              "id": "fb8ca7de-5da4-4fba-bd28-9d0e1f2a3b4c",
+              "name": "phone_number_id",
+              "value": "={{ $('Webhook').first().json.body.entry[0].changes[0].value.metadata.phone_number_id }}",
+              "type": "stringValue"
+            },
+            {
+              "id": "ac9db8ef-6eb5-4acb-ce39-0e1f2a3b4c5d",
+              "name": "text",
+              "value": "Servicio temporalmente no disponible",
+              "type": "stringValue"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bdaeac9f-7fc6-4bdc-df4a-1f2a3b4c5d6e",
+      "name": "Set Fallback",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 620]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $json.phone_number_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.WHATSAPP_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.to }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": \"{{ $json.text }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "cebfbd0a-8ad7-4ced-ef5b-2a3b4c5d6e7f",
+      "name": "HTTP Request Meta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1240, 440]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Token": {
+      "main": [
+        [
+          {
+            "node": "Respond Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Received",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Received": {
+      "main": [
+        [
+          {
+            "node": "Ask API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask API": {
+      "main": [
+        [
+          {
+            "node": "Is 2xx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is 2xx": {
+      "main": [
+        [
+          {
+            "node": "Set Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Reply": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Fallback": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
