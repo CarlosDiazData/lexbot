@@ -16,12 +16,14 @@ Error envelope (design): every unhandled request error becomes
 anything else -> HTTP 500 non-retryable.
 """
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from lexbot_agent.graph import build_agent
@@ -74,6 +76,15 @@ def create_app(
     """
     load_dotenv()  # DEV parity with the ingest CLI: honor .env.example
 
+    # API-4 / D9: CORS origins from a comma-separated CORS_ORIGINS env var,
+    # defaulting to the Vite dev server. Read after load_dotenv() so the env
+    # file is honored; strip whitespace and skip empty entries.
+    cors_origins = [
+        o.strip()
+        for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+        if o.strip()
+    ]
+
     store = store or VectorStore(path=DEFAULT_CHROMA_PATH, embedder=build_embedder())
     database = db or Database()
     knowledge = knowledge_dir or DEFAULT_KNOWLEDGE_DIR
@@ -94,6 +105,14 @@ def create_app(
     app.state.store = store
     app.state.db = database
     app.state.knowledge_dir = knowledge
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
+        allow_credentials=False,  # no cookies in M3 (D9)
+    )
 
     app.add_exception_handler(
         LLMUnavailableError,

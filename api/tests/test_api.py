@@ -184,6 +184,69 @@ def test_health_reports_db_error_without_failing(tmp_path):
     assert resp.json()["db"] == "error"
 
 
+# --- CORS (API-4) -------------------------------------------------------------
+
+def test_cors_preflight_default_origin_echoes_allow_origin(tmp_path, monkeypatch):
+    """API-4.1: CORS_ORIGINS unset → preflight from http://localhost:5173
+    (the default) gets HTTP 200 with Access-Control-Allow-Origin echoed."""
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    app = create_app(
+        agent=FakeAgent(), store=FakeStore(count=1), db=FakeDb(), knowledge_dir=tmp_path
+    )
+    with TestClient(app) as client:
+        resp = client.options(
+            "/chat",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_cors_preflight_disallowed_origin_gets_no_allow_headers(tmp_path, monkeypatch):
+    """API-4.2: an origin outside CORS_ORIGINS must not receive CORS allow
+    headers. starlette answers the disallowed preflight with 400 and no
+    Access-Control-Allow-Origin."""
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    app = create_app(
+        agent=FakeAgent(), store=FakeStore(count=1), db=FakeDb(), knowledge_dir=tmp_path
+    )
+    with TestClient(app) as client:
+        resp = client.options(
+            "/chat",
+            headers={
+                "Origin": "http://evil.example",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+
+    assert resp.status_code == 400
+    assert "access-control-allow-origin" not in resp.headers
+
+
+def test_cors_comma_split_origins_all_echoed(tmp_path, monkeypatch):
+    """D9: CORS_ORIGINS is a comma-separated list; every configured origin is
+    allowed and echoed back on preflight."""
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:5173, http://localhost:4173")
+    app = create_app(
+        agent=FakeAgent(), store=FakeStore(count=1), db=FakeDb(), knowledge_dir=tmp_path
+    )
+    with TestClient(app) as client:
+        for origin in ("http://localhost:5173", "http://localhost:4173"):
+            resp = client.options(
+                "/chat",
+                headers={
+                    "Origin": origin,
+                    "Access-Control-Request-Method": "POST",
+                },
+            )
+            assert resp.status_code == 200
+            assert resp.headers["access-control-allow-origin"] == origin
+
+
 # --- Lifespan (D5 schema apply + D6 auto-seed) --------------------------------
 
 def test_startup_applies_schema_and_auto_seeds_when_empty(tmp_path):
