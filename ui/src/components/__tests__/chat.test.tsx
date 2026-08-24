@@ -12,10 +12,31 @@ function jsonResponse(payload: unknown, status = 200) {
   } as unknown as Response;
 }
 
+const HEALTH_OK = { status: "ok", vector_count: 7, db: "ok" };
+const DEFAULT_ANSWER = { answer: "ok", sources: [], actions: [] };
+
 const fetchMock = vi.fn();
+
+// Queue of responses served to /chat calls. /health always answers 200 ok so
+// the header indicator (unit 5) never interferes with chat-flow assertions.
+function mockChatResponses(...responses: Response[]) {
+  const queue = [...responses];
+  fetchMock.mockImplementation((url: RequestInfo | URL) => {
+    if (String(url).includes("/health")) {
+      return Promise.resolve(jsonResponse(HEALTH_OK));
+    }
+    return Promise.resolve(queue.shift() ?? jsonResponse(DEFAULT_ANSWER));
+  });
+}
+
+// Count only /chat calls — /health fires once on mount in every test.
+function chatFetchCount(): number {
+  return fetchMock.mock.calls.filter(([url]) => !String(url).includes("/health")).length;
+}
 
 beforeEach(() => {
   fetchMock.mockReset();
+  mockChatResponses();
   vi.stubGlobal("fetch", fetchMock);
 });
 
@@ -31,7 +52,7 @@ describe("ChatView", () => {
   });
 
   it("renders a user bubble and the answer bubble after sending (UI-1.1)", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ answer: "LexBot's answer", sources: [], actions: [] }));
+    mockChatResponses(jsonResponse({ answer: "LexBot's answer", sources: [], actions: [] }));
     const user = userEvent.setup();
     render(<ChatView />);
 
@@ -40,11 +61,11 @@ describe("ChatView", () => {
 
     expect(await screen.findByText("What is LexBot?")).toBeInTheDocument();
     expect(await screen.findByText("LexBot's answer")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(chatFetchCount()).toBe(1);
   });
 
   it("replaces the empty state after the first message (UI-6.1)", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ answer: "the answer", sources: [], actions: [] }));
+    mockChatResponses(jsonResponse({ answer: "the answer", sources: [], actions: [] }));
     const user = userEvent.setup();
     render(<ChatView />);
 
@@ -58,6 +79,8 @@ describe("ChatView", () => {
   });
 
   it("disables the input and send button while a request is pending (UI-1)", async () => {
+    // The pending promise also serves the mount-time /health call (health
+    // stays "checking" until resolved at the end) — harmless for this test.
     let resolveFetch!: (value: unknown) => void;
     fetchMock.mockReturnValue(
       new Promise((resolve) => {
@@ -72,7 +95,7 @@ describe("ChatView", () => {
 
     expect(screen.getByLabelText(/message/i)).toBeDisabled();
     expect(screen.getByRole("button", { name: /send/i })).toBeDisabled();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(chatFetchCount()).toBe(1);
 
     // Resolve the pending request so the test leaves no dangling promise.
     await act(async () => {
@@ -81,7 +104,7 @@ describe("ChatView", () => {
   });
 
   it("renders source cards and action badges with all fields (UI-2.1)", async () => {
-    fetchMock.mockResolvedValue(
+    mockChatResponses(
       jsonResponse({
         answer: "Here is the cited answer.",
         sources: [
@@ -123,7 +146,7 @@ describe("ChatView", () => {
   });
 
   it("hides sources and actions sections when both are empty (UI-2.2)", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ answer: "plain answer", sources: [], actions: [] }));
+    mockChatResponses(jsonResponse({ answer: "plain answer", sources: [], actions: [] }));
     const user = userEvent.setup();
     render(<ChatView />);
 
@@ -141,15 +164,13 @@ describe("ChatView", () => {
     vi.useFakeTimers();
     try {
       // Client auto-retries once (500ms) on retryable, then throws — the error
-      // bubble appears after both attempts fail.
-      fetchMock
-        .mockResolvedValueOnce(
-          jsonResponse({ error: { code: "llm_unavailable", message: "LLM unavailable, retry later", retryable: true } }, 503),
-        )
-        .mockResolvedValueOnce(
-          jsonResponse({ error: { code: "llm_unavailable", message: "LLM unavailable, retry later", retryable: true } }, 503),
-        )
-        .mockResolvedValueOnce(jsonResponse({ answer: "recovered answer", sources: [], actions: [] }, 200));
+      // bubble appears after both attempts fail. The queue feeds only /chat;
+      // /health answers 200 ok on mount (routed in mockChatResponses).
+      mockChatResponses(
+        jsonResponse({ error: { code: "llm_unavailable", message: "LLM unavailable, retry later", retryable: true } }, 503),
+        jsonResponse({ error: { code: "llm_unavailable", message: "LLM unavailable, retry later", retryable: true } }, 503),
+        jsonResponse({ answer: "recovered answer", sources: [], actions: [] }, 200),
+      );
 
       // fireEvent (not userEvent) so no internal timers interfere with fake timers.
       render(<ChatView />);
@@ -172,14 +193,14 @@ describe("ChatView", () => {
       await act(async () => {});
       expect(screen.getByText("recovered answer")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(chatFetchCount()).toBe(3);
     } finally {
       vi.useRealTimers();
     }
   });
 
   it("shows the error message without a retry control on 500 (UI-4.1)", async () => {
-    fetchMock.mockResolvedValue(
+    mockChatResponses(
       jsonResponse({ error: { code: "internal_error", message: "Internal server error", retryable: false } }, 500),
     );
     const user = userEvent.setup();
@@ -190,6 +211,6 @@ describe("ChatView", () => {
 
     expect(await screen.findByText("Internal server error")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(chatFetchCount()).toBe(1);
   });
 });
