@@ -1,0 +1,26 @@
+[project]
+name = "lexbot-api"
+version = "0.1.0"
+description = "LexBot API: FastAPI surface for chat, ingest, and health endpoints"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.4",
+    "pydantic==2.13.4",
+    "psycopg[binary]==3.3.4",
+    "lexbot-agent>=0.1.0",
+    "lexbot-ingest>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "httpx==0.28.1"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

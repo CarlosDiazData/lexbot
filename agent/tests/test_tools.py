@@ -287,6 +287,96 @@ def test_notify_whatsapp_unreachable_webhook_returns_error_json(tmp_path):
 
 # --- TOOL-5: JSON-only contract through ToolNode ------------------------------
 
+def test_database_apply_schema_executes_each_statement(monkeypatch, tmp_path):
+    """D5: apply_schema runs db/init.sql statement-by-statement (psycopg3
+    executes one statement per cursor.execute). Verifies the split logic with
+    a fake connection — no live PG needed."""
+    import lexbot_agent.tools as tools_module
+
+    executed = []
+
+    class FakeCursor:
+        def __init__(self):
+            self._rows = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql):
+            executed.append(sql)
+
+    class FakeConn:
+        def __init__(self):
+            self._cursor = FakeCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def cursor(self):
+            return self._cursor
+
+    init_sql = tmp_path / "init.sql"
+    init_sql.write_text(
+        "CREATE TABLE IF NOT EXISTS cases (id SERIAL PRIMARY KEY);\n"
+        "CREATE TABLE IF NOT EXISTS follow_ups (id SERIAL PRIMARY KEY);\n"
+    )
+
+    db = tools_module.Database(dsn="postgresql://fake")
+    monkeypatch.setattr(db, "_connect", lambda: FakeConn())
+    db.apply_schema(init_sql)
+
+    assert len(executed) == 2
+    assert "CREATE TABLE IF NOT EXISTS cases" in executed[0]
+    assert "CREATE TABLE IF NOT EXISTS follow_ups" in executed[1]
+
+
+def test_database_ping_reports_reachability(monkeypatch):
+    """API health: ping() returns True on SELECT 1, False on psycopg error."""
+    import lexbot_agent.tools as tools_module
+
+    class FakeCursor:
+        def __init__(self):
+            self._rows = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql):
+            pass
+
+    class FakeConn:
+        def __init__(self):
+            self._cursor = FakeCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def cursor(self):
+            return self._cursor
+
+    db = tools_module.Database(dsn="postgresql://fake")
+    monkeypatch.setattr(db, "_connect", lambda: FakeConn())
+    assert db.ping() is True
+
+    def broken_connect():
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr(db, "_connect", broken_connect)
+    assert db.ping() is False
+
+
 def test_all_tools_json_contract_and_toolmessage(tmp_path, monkeypatch):
     """Every tool returns JSON-parseable structured output, and ToolNode wraps
     each one in a ToolMessage whose content is JSON-parseable — the agent

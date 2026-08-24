@@ -23,8 +23,10 @@ from lexbot_ingest.chunker import chunk_text
 from lexbot_ingest.cli import load_docs
 from lexbot_ingest.vector_store import VectorStore
 
-# repo_root/docs/knowledge — agent/src/lexbot_agent/tools.py → parents[3]
+# repo_root/docs/knowledge and repo_root/db/init.sql —
+# agent/src/lexbot_agent/tools.py → parents[3]
 DEFAULT_KNOWLEDGE_DIR = Path(__file__).resolve().parents[3] / "docs" / "knowledge"
+DEFAULT_INIT_SQL = Path(__file__).resolve().parents[3] / "db" / "init.sql"
 
 RETRIEVAL_TOP_K = 3
 
@@ -91,6 +93,33 @@ class Database:
                     (case[0], description, due_date),
                 )
                 return cur.fetchone()[0]
+
+    def apply_schema(self, init_sql: Path | None = None) -> None:
+        """Apply db/init.sql idempotently (design D5, DB-1).
+
+        The file is split on ';' and each statement executed separately:
+        psycopg3's cursor.execute sends one statement per call, and the DDL
+        uses CREATE TABLE IF NOT EXISTS, so re-running never errors or
+        duplicates. The connection context manager commits on success.
+        """
+        sql = (init_sql or DEFAULT_INIT_SQL).read_text(encoding="utf-8")
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                for statement in sql.split(";"):
+                    statement = statement.strip()
+                    if statement:
+                        cur.execute(statement)
+
+    def ping(self) -> bool:
+        """Lightweight reachability check (SELECT 1). False on psycopg error —
+        used by the API health endpoint without failing the request."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+            return True
+        except psycopg.Error:
+            return False
 
 
 def seed_knowledge(store: VectorStore, docs_dir: Path) -> int:
