@@ -194,7 +194,7 @@ cd api    && python -m pytest tests/ -v    # 10 tests
 |---|---|
 | Language | Python 3.11+ |
 | Agent framework | LangGraph ≥ 0.2, langchain-core ≥ 0.3 |
-| LLMs | Google Gemini (`gemini-embedding-001`, `gemini-2.0-flash`), OpenAI (`text-embedding-3-small`) |
+| LLMs | Google Gemini (`gemini-embedding-001`, `gemini-3.6-flash`), OpenAI (`text-embedding-3-small`) |
 | Embeddings | OpenAI, Google Gemini, built-in Fake |
 | Vector store | ChromaDB ≥ 0.5 (persistent client, cosine) |
 | API | FastAPI, uvicorn, pydantic |

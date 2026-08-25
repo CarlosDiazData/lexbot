@@ -40,7 +40,7 @@ services:
       # From .env when present (compose auto-loads it); fallbacks match the
       # code defaults in agent/src/lexbot_agent/{llm,tools}.py
       LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
-      LLM_MODEL: ${LLM_MODEL:-gemini-2.0-flash}
+      LLM_MODEL: ${LLM_MODEL:-gemini-3.6-flash}
       # Container network: the db service host, NOT host localhost. Not
       # interpolated on purpose — a localhost URL can never reach PG from here.
       DATABASE_URL: postgresql://lexbot:lexbot@db:5432/lexbot
