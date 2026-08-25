@@ -126,7 +126,7 @@ def test_empty_retrieval_declines_and_offers_notify(tmp_path):
     assert isinstance(last, AIMessage)
     assert "couldn't find" in last.content.lower()
     assert final["sources"] == []
-    assert any(a["type"] == "notify_whatsapp" for a in final["actions"])
+    assert any(a["type"] == "notify_telegram" for a in final["actions"])
 
 
 # --- Non-knowledge intents (case / follow_up / notify) compose per intent ---
@@ -258,7 +258,8 @@ def test_follow_up_unknown_case_surfaces_error_gracefully(tmp_path):
 
 
 def test_notify_intent_composes_status(tmp_path, monkeypatch):
-    monkeypatch.delenv("N8N_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     store = _store(tmp_path)
     llm = FakeLLM(
         responses=[
@@ -266,8 +267,8 @@ def test_notify_intent_composes_status(tmp_path, monkeypatch):
                 content="",
                 tool_calls=[
                     _tool_call(
-                        "notify_whatsapp",
-                        {"phone": "+5491100000000", "message": "Hello"},
+                        "notify_telegram",
+                        {"chat_id": "123456", "message": "Hello"},
                     )
                 ],
             )
@@ -281,6 +282,7 @@ def test_notify_intent_composes_status(tmp_path, monkeypatch):
     assert final["intent"] == "notify"
     last = final["messages"][-1]
     assert isinstance(last, AIMessage)
+    assert "no telegram bot token" in last.content.lower()
     assert "stub" in last.content.lower()
     assert final["sources"] == []
     assert final["actions"][0]["detail"] == "stub"

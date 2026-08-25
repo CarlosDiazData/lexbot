@@ -4,7 +4,7 @@ SQL tools (search_case, register_follow_up) are exercised against a duck-typed
 FakeDatabase that raises real psycopg exceptions to prove the DB-down error
 JSON path without a live PostgreSQL — the Database SQL itself is verified
 against compose PG at unit 6 E2E (Docker daemon unavailable on this host).
-notify_whatsapp uses httpx.MockTransport (no live n8n, design D7).
+notify_telegram uses httpx.MockTransport (no live Telegram, design D7).
 """
 
 import json
@@ -241,17 +241,27 @@ def test_register_follow_up_db_down_returns_error_json(tmp_path):
     assert result["error"]["retryable"] is True
 
 
-# --- notify_whatsapp (TOOL-4) ------------------------------------------------
+# --- notify_telegram (TOOL-4) ------------------------------------------------
 
-def test_notify_whatsapp_stub_when_no_webhook(tmp_path, monkeypatch):
-    monkeypatch.delenv("N8N_WEBHOOK_URL", raising=False)
+def test_notify_telegram_stub_when_no_token(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     store = _store(tmp_path)
-    [_, _, _, notify_whatsapp] = _tools(store)
-    result = notify_whatsapp.invoke({"phone": "+5491100000000", "message": "Hello"})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("stub mode must not send requests")
+
+    transport = httpx.MockTransport(handler)
+    [_, _, _, notify_telegram] = _tools(
+        store, http_client=httpx.Client(transport=transport)
+    )
+    result = notify_telegram.invoke({"chat_id": "123456", "message": "Hello"})
     assert result == {"status": "stub"}
 
 
-def test_notify_whatsapp_posts_to_webhook(tmp_path, monkeypatch):
+def test_notify_telegram_posts_sendmessage(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -261,27 +271,121 @@ def test_notify_whatsapp_posts_to_webhook(tmp_path, monkeypatch):
 
     transport = httpx.MockTransport(handler)
     store = _store(tmp_path)
-    [_, _, _, notify_whatsapp] = _tools(
-        store, http_client=httpx.Client(transport=transport), webhook_url="http://n8n.local/hook"
+    [_, _, _, notify_telegram] = _tools(
+        store, http_client=httpx.Client(transport=transport), bot_token="TEST_TOKEN"
     )
-    result = notify_whatsapp.invoke({"phone": "+5491100000000", "message": "Hello"})
+    result = notify_telegram.invoke({"chat_id": "123456", "message": "Hello"})
     assert result == {"status": "sent"}
-    assert captured["url"] == "http://n8n.local/hook"
-    assert captured["json"] == {"phone": "+5491100000000", "message": "Hello"}
+    assert captured["url"] == "https://api.telegram.org/botTEST_TOKEN/sendMessage"
+    assert captured["json"] == {"chat_id": "123456", "text": "Hello"}
+    # TG-5.1: plain text — no parse_mode in the sendMessage body.
+    assert "parse_mode" not in captured["json"]
 
 
-def test_notify_whatsapp_unreachable_webhook_returns_error_json(tmp_path):
+def test_notify_telegram_rate_limited_returns_retry_after(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={
+                "ok": False,
+                "error_code": 429,
+                "description": "Too Many Requests: retry after 30",
+                "parameters": {"retry_after": 30},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    store = _store(tmp_path)
+    [_, _, _, notify_telegram] = _tools(
+        store, http_client=httpx.Client(transport=transport), bot_token="TEST_TOKEN"
+    )
+    result = notify_telegram.invoke({"chat_id": "123456", "message": "Hello"})
+    assert set(result) == {"error"}
+    assert result["error"]["code"] == "telegram_rate_limited"
+    assert result["error"]["retryable"] is True
+    assert result["error"]["retry_after"] == 30
+
+
+def test_notify_telegram_unknown_chat_returns_error_json(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "ok": False,
+                "error_code": 400,
+                "description": "Bad Request: chat not found",
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    store = _store(tmp_path)
+    [_, _, _, notify_telegram] = _tools(
+        store, http_client=httpx.Client(transport=transport), bot_token="TEST_TOKEN"
+    )
+    result = notify_telegram.invoke({"chat_id": "999", "message": "Hello"})
+    assert set(result) == {"error"}
+    assert result["error"]["code"] == "chat_not_found"
+    assert result["error"]["retryable"] is False
+
+
+def test_notify_telegram_missing_chat_id_returns_error_json(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("missing chat_id must not send a request")
+
+    transport = httpx.MockTransport(handler)
+    store = _store(tmp_path)
+    [_, _, _, notify_telegram] = _tools(
+        store, http_client=httpx.Client(transport=transport), bot_token="TEST_TOKEN"
+    )
+    result = notify_telegram.invoke({"chat_id": "", "message": "Hello"})
+    assert set(result) == {"error"}
+    assert result["error"]["code"] == "chat_id_missing"
+    assert result["error"]["retryable"] is False
+
+
+def test_notify_telegram_falls_back_to_env_chat_id(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "987654")
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={"ok": True})
+
+    transport = httpx.MockTransport(handler)
+    store = _store(tmp_path)
+    [_, _, _, notify_telegram] = _tools(
+        store, http_client=httpx.Client(transport=transport), bot_token="TEST_TOKEN"
+    )
+    result = notify_telegram.invoke({"chat_id": "", "message": "Hello"})
+    assert result == {"status": "sent"}
+    assert captured["json"]["chat_id"] == "987654"
+
+
+def test_notify_telegram_unreachable_returns_error_json(tmp_path, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused", request=request)
 
     transport = httpx.MockTransport(handler)
     store = _store(tmp_path)
-    [_, _, _, notify_whatsapp] = _tools(
-        store, http_client=httpx.Client(transport=transport), webhook_url="http://n8n.local/hook"
+    [_, _, _, notify_telegram] = _tools(
+        store, http_client=httpx.Client(transport=transport), bot_token="TEST_TOKEN"
     )
-    result = notify_whatsapp.invoke({"phone": "+5491100000000", "message": "Hello"})
+    result = notify_telegram.invoke({"chat_id": "123456", "message": "Hello"})
     assert set(result) == {"error"}
-    assert result["error"]["code"] == "webhook_unreachable"
+    assert result["error"]["code"] == "telegram_unreachable"
     assert result["error"]["retryable"] is True
 
 
@@ -381,7 +485,8 @@ def test_all_tools_json_contract_and_toolmessage(tmp_path, monkeypatch):
     """Every tool returns JSON-parseable structured output, and ToolNode wraps
     each one in a ToolMessage whose content is JSON-parseable — the agent
     continues on tool results without parsing free text (TOOL-5)."""
-    monkeypatch.delenv("N8N_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     store = _store(tmp_path)
     db = FakeDatabase(
         cases=[
@@ -400,7 +505,7 @@ def test_all_tools_json_contract_and_toolmessage(tmp_path, monkeypatch):
         _tool_call("retrieve_knowledge", {"query": "confidentiality"}, "call_1"),
         _tool_call("search_case", {"query": "acme"}, "call_2"),
         _tool_call("register_follow_up", {"case_number": "CASE-1001", "description": "Follow up"}, "call_3"),
-        _tool_call("notify_whatsapp", {"phone": "+5491100000000", "message": "Hello"}, "call_4"),
+        _tool_call("notify_telegram", {"chat_id": "123456", "message": "Hello"}, "call_4"),
     ]
     state = node.invoke(
         {

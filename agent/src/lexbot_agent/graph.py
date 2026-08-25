@@ -30,7 +30,7 @@ _INTENT_BY_TOOL = {
     "retrieve_knowledge": "knowledge",
     "search_case": "case",
     "register_follow_up": "follow_up",
-    "notify_whatsapp": "notify",
+    "notify_telegram": "notify",
 }
 
 OUT_OF_SCOPE_ANSWER = (
@@ -54,8 +54,19 @@ _ERROR_ANSWERS = {
         "I couldn't find that case number in the case files. "
         "Double-check the number, or ask a human to create the case first."
     ),
-    "webhook_unreachable": (
-        "The notification service is unreachable right now. "
+    "telegram_rate_limited": (
+        "Telegram is rate-limiting notifications right now. "
+        "Please try again in a moment."
+    ),
+    "chat_not_found": (
+        "I couldn't send the notification: that chat doesn't exist. "
+        "Double-check the chat ID."
+    ),
+    "chat_id_missing": (
+        "I couldn't send the notification: no chat is configured to notify."
+    ),
+    "telegram_unreachable": (
+        "The Telegram notification service is unreachable right now. "
         "Please try again in a moment."
     ),
 }
@@ -181,7 +192,7 @@ def _compose_from_tool_payload(tool_name: str, intent: str, payloads: list[dict]
         statuses = [p.get("status") for p in payloads if "status" in p]
         status = statuses[0] if statuses else "unknown"
         if status == "stub":
-            answer = "Notification skipped: no WhatsApp webhook is configured (stub mode)."
+            answer = "Notification skipped: no Telegram bot token is configured (stub mode)."
             detail = "stub"
         elif status == "sent":
             answer = "The notification was sent successfully."
@@ -213,14 +224,15 @@ def build_agent(
     docs_dir: Path | None = None,
     db=None,
     http_client=None,
-    webhook_url: str | None = None,
+    bot_token: str | None = None,
+    chat_id: str | None = None,
 ):
     """Build the compiled agent graph.
 
     llm defaults to build_llm() (gemini/openai/fake via env), store defaults
     to ./data/chroma with the configured embedder. Tests inject a FakeLLM and
-    a tmp Chroma store; db / http_client / webhook_url pass through to
-    build_tools so SQL and webhook seams stay injectable at graph level too.
+    a tmp Chroma store; db / http_client / bot_token / chat_id pass through to
+    build_tools so SQL and Telegram seams stay injectable at graph level too.
     """
     llm = llm or build_llm()
     store = store or VectorStore(path="./data/chroma", embedder=build_embedder())
@@ -229,7 +241,8 @@ def build_agent(
         docs_dir=docs_dir,
         db=db,
         http_client=http_client,
-        webhook_url=webhook_url,
+        bot_token=bot_token,
+        chat_id=chat_id,
     )
 
     def classify_intent(state: AgentState) -> dict:
@@ -269,7 +282,7 @@ def build_agent(
                     "intent": intent,
                     "context": [],
                     "sources": [],
-                    "actions": [{"type": "notify_whatsapp", "detail": "offer to notify a human"}],
+                    "actions": [{"type": "notify_telegram", "detail": "offer to notify a human"}],
                 }
 
             # Success path: compose the answer from the retrieved chunks, citing
