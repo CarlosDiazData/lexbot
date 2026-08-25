@@ -33,10 +33,18 @@ class TelegramClient:
             timeout=10.0,
         )
 
-    async def set_webhook(self, url: str) -> httpx.Response:
-        """Register the webhook URL (idempotent, design D1)."""
+    async def set_webhook(self, url: str, secret_token: str | None = None) -> httpx.Response:
+        """Register the webhook URL (idempotent, design D1).
+
+        When a secret_token is configured it is sent so Telegram delivers the
+        X-Telegram-Bot-Api-Secret-Token header on every update — without it the
+        router fails closed (401) and the webhook can never process updates.
+        """
+        payload: dict = {"url": url}
+        if secret_token:
+            payload["secret_token"] = secret_token
         return await self._client.post(
             self._url("setWebhook"),
-            json={"url": url},
+            json=payload,
             timeout=10.0,
         )

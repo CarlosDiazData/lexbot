@@ -485,7 +485,10 @@ def test_lifespan_setwebhook_when_token_and_url_set(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert len(calls) == 1, "D1: setWebhook called once at startup"
     assert str(calls[0].url).endswith("/bot123:TESTTOKEN/setWebhook")
-    assert json.loads(calls[0].content) == {"url": "https://example.com/webhook/telegram"}
+    assert json.loads(calls[0].content) == {
+        "url": "https://example.com/webhook/telegram",
+        "secret_token": TELEGRAM_SECRET,
+    }
 
 
 def test_lifespan_skips_setwebhook_when_token_unset(tmp_path, monkeypatch):

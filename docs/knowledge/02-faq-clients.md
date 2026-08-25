@@ -6,8 +6,8 @@ Bring a government-issued ID, any contracts or documents related to your case, a
 ## How are fees calculated?
 Fees depend on the type of matter: fixed fee for standard procedures, hourly rate for complex work, or contingency for certain civil cases. You receive a written fee agreement before any work begins.
 
-## Can I get advice by phone or WhatsApp?
-Yes. Routine questions are answered through the WhatsApp business line during office hours. Anything requiring legal analysis is scheduled as a consultation.
+## Can I get advice by phone or Telegram?
+Yes. Routine questions are answered through the Telegram business line during office hours. Anything requiring legal analysis is scheduled as a consultation.
 
 ## How long does a contract review take?
 Standard contract reviews are delivered within 5 business days. Urgent reviews are available at a premium rate.

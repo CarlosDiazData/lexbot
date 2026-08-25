@@ -10,7 +10,7 @@ Hourly billing is invoiced monthly. Retainer clients are billed at the start of 
 All client information is confidential. Documents are stored in encrypted repositories with access limited to the assigned team.
 
 ## Communication
-Client communication happens through the official channels: email, phone, and the WhatsApp business line. Responses to client messages are expected within one business day.
+Client communication happens through the official channels: email, phone, and the Telegram business line. Responses to client messages are expected within one business day.
 
 ## Data protection
 Personal data of clients is processed under applicable data protection law and retained only for as long as the matter requires. Client files are never shared outside the firm without written authorization from the client.

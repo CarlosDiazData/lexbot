@@ -127,7 +127,9 @@ def create_app(
         webhook_url: str = app.state.telegram_webhook_url
         if telegram.token and webhook_url:
             try:
-                response = await telegram.set_webhook(webhook_url)
+                response = await telegram.set_webhook(
+                    webhook_url, secret_token=app.state.telegram_secret
+                )
                 if response.status_code >= 400:
                     logger.warning(
                         "setWebhook rejected by Telegram (HTTP %s): %s",
