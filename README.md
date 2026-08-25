@@ -1,6 +1,6 @@
 # LexBot
 
-**Legal assistant with RAG and agentic AI** — a portfolio project for a legal-firm internship. Chat with a firm's knowledge base, search case records, and register follow-ups, all grounded in retrieved documents.
+**Legal assistant with RAG and agentic AI** — Chat with a firm's knowledge base, search case records, and register follow-ups, all grounded in retrieved documents.
 
 ## Architecture Overview
 
