@@ -200,6 +200,7 @@ to the same chat via `sendMessage`.
 | Webhook URL | `TELEGRAM_WEBHOOK_URL` = `https://<tunnel>/webhook/telegram` |
 | Secret token | `TELEGRAM_WEBHOOK_SECRET` — sent to Telegram as `secret_token`; the API 401s every update whose `X-Telegram-Bot-Api-Secret-Token` header does not match (fail closed) |
 | Detach the webhook | `curl -X POST "https://api.telegram.org/bot<TOKEN>/deleteWebhook"` |
+| Citation links | Answer `[slug]` tags resolve to `SOURCE_URL_BASE` (default: GitHub blob of `docs/knowledge`) — Telegram replies send them as HTML links, the web UI as source-card anchors |
 
 ### Verification
 
