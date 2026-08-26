@@ -211,10 +211,10 @@ to the same chat via `sendMessage`.
 ## Running Tests
 
 ```bash
-cd ingest && python -m pytest tests/ -v    # 13 tests
-cd agent  && python -m pytest tests/ -v    # 30 tests
-cd api    && python -m pytest tests/ -v    # 23 tests
-cd ui     && npm test                      # 30 tests
+cd ingest && python -m pytest tests/ -v    # 14 tests
+cd agent  && python -m pytest tests/ -v    # 31 tests
+cd api    && python -m pytest tests/ -v    # 32 tests
+cd ui     && npm test                      # 31 tests
 ```
 
 ## Troubleshooting
@@ -226,6 +226,7 @@ cd ui     && npm test                      # 30 tests
 | `/health` shows `vector_count: -1` | API holds a stale ChromaDB collection handle after an external reset | `docker compose restart api` |
 | `db` fails to bind 5432 | Another project's PostgreSQL occupies the port | Stop that container, or map `5433:5432` for local runs |
 | API answers without citations after adding a key | Store was seeded with FakeEmbedder vectors | Re-seed with the real provider + `--reset`, then restart api (see Quick Start 4) |
+| Citations leak raw paths (`[../docs/knowledge/...]`) | Store seeded by an ingest that stored full paths as `source` | Re-seed with current ingest code + `--reset` (sources are basenames now) |
 | Telegram send fails with 4xx | `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` missing or wrong | Set them in `.env`; verify the token with @BotFather `/getme` |
 | Bot never replies to inbound messages | Webhook not registered, or `TELEGRAM_WEBHOOK_SECRET` mismatch | Check `TELEGRAM_WEBHOOK_URL`/`TELEGRAM_WEBHOOK_SECRET` in `.env`, restart api, and confirm with `getWebhookInfo` |
 | Webhook updates rejected with 401 | Telegram delivers without the secret header | Re-register via `scripts/demo-telegram.sh` (sends `secret_token`), or setWebhook manually with the matching secret |
