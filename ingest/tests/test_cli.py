@@ -28,6 +28,30 @@ def test_cli_ingests_docs_and_reports_chunks(tmp_path, capsys):
     assert store.count() == 5
 
 
+def test_cli_source_metadata_is_basename(tmp_path):
+    # Docs in nested dirs must cite the basename, not the full path — the
+    # agent renders {source} as [source] citation tags (graph.py) and a raw
+    # path like ../docs/knowledge/x.md leaks into user-facing answers.
+    docs = tmp_path / "docs"
+    (docs / "nested").mkdir(parents=True)
+    (docs / "nested" / "policy.md").write_text("word " * 300, encoding="utf-8")
+    db_path = tmp_path / "chroma"
+
+    main(
+        [
+            "--docs", str(docs),
+            "--db-path", str(db_path),
+            "--provider", "fake",
+            "--chunk-size", "400",
+            "--overlap", "50",
+        ]
+    )
+
+    store = VectorStore(path=str(db_path), embedder=FakeEmbedder())
+    results = store.query("word", n_results=1)
+    assert results[0]["metadata"]["source"] == "policy.md"
+
+
 def test_cli_reset_recreates_collection(tmp_path, capsys):
     docs = tmp_path / "docs"
     docs.mkdir()

@@ -14,7 +14,9 @@ def load_docs(docs_dir: Path) -> list[tuple[str, str]]:
     docs: list[tuple[str, str]] = []
     for path in sorted(docs_dir.rglob("*")):
         if path.is_file() and path.suffix in DOC_EXTENSIONS:
-            docs.append((str(path), path.read_text(encoding="utf-8")))
+            # Basename only: the agent renders {source} as [source] citation
+            # tags (graph.py) — a raw path would leak into user-facing answers.
+            docs.append((path.name, path.read_text(encoding="utf-8")))
     return docs
 
 
