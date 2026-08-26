@@ -64,11 +64,16 @@ class FakeDb:
         return self.ping_ok
 
 
+EXPECTED_SOURCE_URL = (
+    "https://github.com/CarlosDiazData/lexbot/blob/main/docs/knowledge/01-firm-policies.md"
+)
+
+
 def _default_result() -> dict:
     return {
         "messages": [
             AIMessage(
-                content="According to 01-firm-policies.md, advance payment is required."
+                content="According to [01-firm-policies.md], advance payment is required."
             )
         ],
         "intent": "knowledge",
@@ -97,8 +102,9 @@ def test_chat_happy_path_returns_answer_sources_actions(tmp_path):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["answer"] == "According to 01-firm-policies.md, advance payment is required."
+    assert body["answer"] == "According to [01-firm-policies.md], advance payment is required."
     assert body["sources"][0]["source"] == "01-firm-policies.md"
+    assert body["sources"][0]["url"] == EXPECTED_SOURCE_URL
     assert body["actions"][0] == {"type": "retrieve_knowledge", "detail": "1 chunks retrieved"}
     # The agent received the raw message as a HumanMessage.
     sent = agent.inputs[0]["messages"][0]
@@ -193,7 +199,7 @@ def test_health_reports_db_error_without_failing(tmp_path):
 def test_cors_preflight_default_origin_echoes_allow_origin(tmp_path, monkeypatch):
     """API-4.1: CORS_ORIGINS unset → preflight from http://localhost:5173
     (the default) gets HTTP 200 with Access-Control-Allow-Origin echoed."""
-    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:5173")
     app = create_app(
         agent=FakeAgent(), store=FakeStore(count=1), db=FakeDb(), knowledge_dir=tmp_path
     )
@@ -214,7 +220,7 @@ def test_cors_preflight_disallowed_origin_gets_no_allow_headers(tmp_path, monkey
     """API-4.2: an origin outside CORS_ORIGINS must not receive CORS allow
     headers. starlette answers the disallowed preflight with 400 and no
     Access-Control-Allow-Origin."""
-    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:5173")
     app = create_app(
         agent=FakeAgent(), store=FakeStore(count=1), db=FakeDb(), knowledge_dir=tmp_path
     )
@@ -280,7 +286,11 @@ TELEGRAM_UPDATE = {
 }
 TELEGRAM_SECRET = "topsecret"
 SECRET_HEADER = {"X-Telegram-Bot-Api-Secret-Token": TELEGRAM_SECRET}
-TELEGRAM_ANSWER = "According to 01-firm-policies.md, advance payment is required."
+TELEGRAM_ANSWER = "According to [01-firm-policies.md], advance payment is required."
+EXPECTED_LINKED_ANSWER = (
+    'According to <a href="' + EXPECTED_SOURCE_URL + '">[01-firm-policies.md]</a>, '
+    "advance payment is required."
+)
 
 
 def _telegram_client(handler) -> httpx.AsyncClient:
@@ -298,7 +308,7 @@ def test_webhook_happy_path_replies_to_sender_chat(tmp_path, monkeypatch):
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:TESTTOKEN")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", TELEGRAM_SECRET)
-    monkeypatch.delenv("TELEGRAM_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_URL", "")
     app = create_app(
         agent=agent,
         store=FakeStore(count=1),
@@ -317,10 +327,17 @@ def test_webhook_happy_path_replies_to_sender_chat(tmp_path, monkeypatch):
     sent = agent.inputs[0]["messages"][0]
     assert isinstance(sent, HumanMessage)
     assert sent.content == "hello from telegram"
-    # One sendMessage to the sender's chat, plain text, no parse_mode (TG-5.1).
+    # One sendMessage to the sender's chat; the answer's [slug] citation is
+    # linkified and sent with parse_mode=HTML. TELEGRAM_WEBHOOK_URL is
+    # explicitly "" (stub mode) so the startup setWebhook never fires and the
+    # only Telegram call is the reply.
     assert len(calls) == 1
     assert str(calls[0].url).endswith("/bot123:TESTTOKEN/sendMessage")
-    assert json.loads(calls[0].content) == {"chat_id": 12345, "text": TELEGRAM_ANSWER}
+    assert json.loads(calls[0].content) == {
+        "chat_id": 12345,
+        "text": EXPECTED_LINKED_ANSWER,
+        "parse_mode": "HTML",
+    }
 
 
 def test_webhook_wrong_secret_returns_401_no_invocation(tmp_path, monkeypatch):
@@ -362,7 +379,7 @@ def test_webhook_missing_secret_returns_401_no_invocation(tmp_path, monkeypatch)
 def test_webhook_fail_closed_when_secret_unset(tmp_path, monkeypatch):
     agent = FakeAgent()
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:TESTTOKEN")
-    monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "")
     app = create_app(
         agent=agent, store=FakeStore(count=1), db=FakeDb(), knowledge_dir=tmp_path
     )
@@ -386,7 +403,7 @@ def test_webhook_duplicate_update_id_invoked_once(tmp_path, monkeypatch):
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:TESTTOKEN")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", TELEGRAM_SECRET)
-    monkeypatch.delenv("TELEGRAM_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_URL", "")
     app = create_app(
         agent=agent,
         store=FakeStore(count=1),
@@ -415,7 +432,7 @@ def test_webhook_non_message_update_is_noop(tmp_path, monkeypatch):
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:TESTTOKEN")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", TELEGRAM_SECRET)
-    monkeypatch.delenv("TELEGRAM_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_URL", "")
     app = create_app(
         agent=agent,
         store=FakeStore(count=1),
@@ -435,7 +452,7 @@ def test_webhook_non_message_update_is_noop(tmp_path, monkeypatch):
 
 def test_webhook_no_token_acknowledges_without_processing(tmp_path, monkeypatch):
     agent = FakeAgent()
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", TELEGRAM_SECRET)
     app = create_app(
         agent=agent, store=FakeStore(count=1), db=FakeDb(), knowledge_dir=tmp_path
@@ -498,7 +515,7 @@ def test_lifespan_skips_setwebhook_when_token_unset(tmp_path, monkeypatch):
         calls.append(request)
         return httpx.Response(200, json={"ok": True})
 
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", TELEGRAM_SECRET)
     monkeypatch.setenv("TELEGRAM_WEBHOOK_URL", "https://example.com/webhook/telegram")
     app = create_app(
@@ -524,7 +541,7 @@ def test_lifespan_skips_setwebhook_when_url_unset(tmp_path, monkeypatch):
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:TESTTOKEN")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", TELEGRAM_SECRET)
-    monkeypatch.delenv("TELEGRAM_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_URL", "")
     app = create_app(
         agent=FakeAgent(),
         store=FakeStore(count=1),

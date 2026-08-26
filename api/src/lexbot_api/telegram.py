@@ -3,8 +3,9 @@
 The agent package keeps its own sendMessage call site (the notify_telegram
 tool in tools.py); this client is the api package's mirror for webhook
 replies and webhook registration. Both sides POST to the same Bot API
-endpoints with plain text (no parse_mode, TG-5) through an injected httpx
-client so tests run on MockTransport without live Telegram credentials.
+endpoints — plain text by default, parse_mode opt-in (TG-5) — through an
+injected httpx client so tests run on MockTransport without live Telegram
+credentials.
 """
 
 import httpx
@@ -25,11 +26,17 @@ class TelegramClient:
     def _url(self, method: str) -> str:
         return f"https://api.telegram.org/bot{self.token}/{method}"
 
-    async def send_message(self, chat_id: int, text: str) -> httpx.Response:
-        """Reply to a chat with plain text — no parse_mode (TG-5.1)."""
+    async def send_message(
+        self, chat_id: int, text: str, parse_mode: str | None = None
+    ) -> httpx.Response:
+        """Reply to a chat; parse_mode (e.g. "HTML") is included in the payload
+        only when given, keeping plain-text requests backward compatible."""
+        payload: dict = {"chat_id": chat_id, "text": text}
+        if parse_mode is not None:
+            payload["parse_mode"] = parse_mode
         return await self._client.post(
             self._url("sendMessage"),
-            json={"chat_id": chat_id, "text": text},
+            json=payload,
             timeout=10.0,
         )
 

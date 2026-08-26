@@ -19,6 +19,7 @@ class Source(BaseModel):
     text: str
     source: str
     distance: float
+    url: str = ""
 
 
 class Action(BaseModel):

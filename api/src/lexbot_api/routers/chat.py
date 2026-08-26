@@ -15,6 +15,7 @@ from langchain_core.messages import HumanMessage
 
 from ..app import LLMUnavailableError, get_agent
 from ..schemas import ChatRequest, ChatResponse
+from ..sources import source_url
 
 router = APIRouter()
 
@@ -30,6 +31,6 @@ async def chat(body: ChatRequest, request: Request, agent=Depends(get_agent)):
     answer = final_message.content if isinstance(final_message.content, str) else str(final_message.content)
     return {
         "answer": answer,
-        "sources": result.get("sources", []),
+        "sources": [dict(s, url=source_url(s["source"])) for s in result.get("sources", [])],
         "actions": result.get("actions", []),
     }

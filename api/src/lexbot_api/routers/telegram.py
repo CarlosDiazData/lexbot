@@ -20,6 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from langchain_core.messages import HumanMessage
 
+from ..sources import format_answer_html
 from ..telegram import TelegramClient
 
 logger = logging.getLogger(__name__)
@@ -73,8 +74,13 @@ async def _run_agent_and_reply(
         if isinstance(final_message.content, str)
         else str(final_message.content)
     )
+    # Presentation layer: linkify the [slug] citations the agent actually
+    # cited, escape everything else, and send as HTML (the [slug] contract
+    # stays; the agent code never changes).
+    slugs = {s["source"] for s in result.get("sources", [])}
+    text = format_answer_html(answer, slugs)
     try:
-        await client.send_message(chat_id, answer)
+        await client.send_message(chat_id, text, parse_mode="HTML")
     except Exception:
         logger.exception("telegram webhook: reply to chat %s failed", chat_id)
 
