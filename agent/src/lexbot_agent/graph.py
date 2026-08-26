@@ -287,7 +287,17 @@ def build_agent(
 
             # Success path: compose the answer from the retrieved chunks, citing
             # sources (design data flow: compose_answer invokes the LLM with the
-            # tool messages + context).
+            # tool messages + context). The user's original question must be in
+            # the prompt — without it the model answers "you haven't included a
+            # question" (regression covered by test_compose_prompt_includes_user_question).
+            user_text = next(
+                (
+                    m.content
+                    for m in state["messages"]
+                    if isinstance(m, HumanMessage)
+                ),
+                "",
+            )
             sources = [
                 {"id": r["id"], "text": r["text"], "source": r["source"], "distance": r["distance"]}
                 for r in results
@@ -297,6 +307,7 @@ def build_agent(
                 "You are LexBot, a legal assistant. Answer the user's question "
                 "using ONLY the retrieved knowledge below, and cite each source "
                 "you use by its [source] tag.\n\n"
+                f"User question: {user_text}\n\n"
                 f"Retrieved knowledge:\n{context}"
             )
             final = llm.invoke([HumanMessage(content=prompt)])

@@ -8,6 +8,7 @@ deterministically from the tool JSON payload.
 
 import psycopg
 from langchain_core.messages import AIMessage, HumanMessage
+from pydantic import Field
 
 from lexbot_agent.graph import build_agent
 from lexbot_agent.llm import FakeLLM
@@ -66,6 +67,44 @@ def _store(tmp_path) -> VectorStore:
 
 def _tool_call(name: str, args: dict, call_id: str = "call_1") -> dict:
     return {"name": name, "args": args, "id": call_id, "type": "tool_call"}
+
+
+class RecordingLLM(FakeLLM):
+    """FakeLLM that also records every HumanMessage prompt it receives."""
+
+    prompts: list[str] = Field(default_factory=list)
+
+    def __init__(self, responses):
+        super().__init__(responses=responses)
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.prompts.extend(
+            m.content for m in messages if isinstance(m, HumanMessage)
+        )
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+
+def test_compose_prompt_includes_user_question(tmp_path):
+    """The compose LLM must receive the user's original question — without it
+    the model answers "you haven't included a question" (regression: the
+    compose prompt was built from the retrieval context only)."""
+    store = _store(tmp_path)
+    llm = RecordingLLM(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[_tool_call("retrieve_knowledge", {"query": "payment terms"})],
+            ),
+            AIMessage(content="According to 01-firm-policies.md, advance payment applies."),
+        ]
+    )
+    app = build_agent(llm=llm, store=store)
+    app.invoke({"messages": [HumanMessage(content="What are the payment terms?")]})
+
+    # Last prompt = the compose step (classify_intent got the raw messages).
+    compose_prompt = llm.prompts[-1]
+    assert "What are the payment terms?" in compose_prompt
+    assert "01-firm-policies.md" in compose_prompt  # retrieval context too
 
 
 def test_tool_call_routes_to_tools_and_cites_sources(tmp_path):
