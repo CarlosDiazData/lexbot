@@ -108,8 +108,20 @@ describe("ChatView", () => {
       jsonResponse({
         answer: "Here is the cited answer.",
         sources: [
-          { id: "doc-1", text: "RAG explanation text.", source: "docs/faq.md", distance: 0.1234 },
-          { id: "doc-2", text: "Vector store detail.", source: "docs/architecture.md", distance: 0.5678 },
+          {
+            id: "doc-1",
+            text: "RAG explanation text.",
+            source: "docs/faq.md",
+            distance: 0.1234,
+            url: "https://github.com/CarlosDiazData/lexbot/blob/main/docs/knowledge/docs/faq.md",
+          },
+          {
+            id: "doc-2",
+            text: "Vector store detail.",
+            source: "docs/architecture.md",
+            distance: 0.5678,
+            url: "https://github.com/CarlosDiazData/lexbot/blob/main/docs/knowledge/docs/architecture.md",
+          },
         ],
         actions: [
           { type: "search", detail: "knowledge base" },
@@ -132,17 +144,61 @@ describe("ChatView", () => {
     expect(cards).toHaveLength(2);
     expect(within(cards[0]).getByText("doc-1")).toBeInTheDocument();
     expect(within(cards[0]).getByText("RAG explanation text.")).toBeInTheDocument();
-    expect(within(cards[0]).getByText("docs/faq.md")).toBeInTheDocument();
+    const sourceLink1 = within(cards[0]).getByRole("link", { name: "docs/faq.md" });
+    expect(sourceLink1).toHaveAttribute(
+      "href",
+      "https://github.com/CarlosDiazData/lexbot/blob/main/docs/knowledge/docs/faq.md",
+    );
+    expect(sourceLink1).toHaveAttribute("target", "_blank");
+    expect(sourceLink1).toHaveAttribute("rel", "noreferrer");
     expect(within(cards[0]).getByText("distance: 0.1234")).toBeInTheDocument();
     expect(within(cards[1]).getByText("doc-2")).toBeInTheDocument();
     expect(within(cards[1]).getByText("Vector store detail.")).toBeInTheDocument();
-    expect(within(cards[1]).getByText("docs/architecture.md")).toBeInTheDocument();
+    const sourceLink2 = within(cards[1]).getByRole("link", { name: "docs/architecture.md" });
+    expect(sourceLink2).toHaveAttribute(
+      "href",
+      "https://github.com/CarlosDiazData/lexbot/blob/main/docs/knowledge/docs/architecture.md",
+    );
+    expect(sourceLink2).toHaveAttribute("target", "_blank");
     expect(within(cards[1]).getByText("distance: 0.5678")).toBeInTheDocument();
 
     const badges = screen.getAllByTestId("action-badge");
     expect(badges).toHaveLength(2);
     expect(within(badges[0]).getByText(/search: knowledge base/)).toBeInTheDocument();
     expect(within(badges[1]).getByText(/cite: doc-1/)).toBeInTheDocument();
+  });
+
+  it("linkifies known [slug] citations in the answer and leaves unknown tags literal", async () => {
+    mockChatResponses(
+      jsonResponse({
+        answer: "See [docs/faq.md] for the policy, but [bogus.md] is not a real citation.",
+        sources: [
+          {
+            id: "doc-1",
+            text: "RAG explanation text.",
+            source: "docs/faq.md",
+            distance: 0.1234,
+            url: "https://github.com/CarlosDiazData/lexbot/blob/main/docs/knowledge/docs/faq.md",
+          },
+        ],
+        actions: [],
+      }),
+    );
+    const user = userEvent.setup();
+    render(<ChatView />);
+
+    await user.type(screen.getByLabelText(/message/i), "what is the policy?");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    const citation = await screen.findByRole("link", { name: "[docs/faq.md]" });
+    expect(citation).toHaveAttribute(
+      "href",
+      "https://github.com/CarlosDiazData/lexbot/blob/main/docs/knowledge/docs/faq.md",
+    );
+    expect(citation).toHaveAttribute("target", "_blank");
+    expect(citation).toHaveAttribute("rel", "noreferrer");
+    expect(screen.getByText(/bogus\.md.*is not a real citation/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "[bogus.md]" })).not.toBeInTheDocument();
   });
 
   it("hides sources and actions sections when both are empty (UI-2.2)", async () => {

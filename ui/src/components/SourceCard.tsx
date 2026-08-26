@@ -10,7 +10,18 @@ export default function SourceCard({ source }: SourceCardProps) {
     <div data-testid="source-card" className="rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-600">
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-semibold text-slate-700">{source.id}</span>
-        <span className="text-slate-400">{source.source}</span>
+        {source.url ? (
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-slate-400 underline"
+          >
+            {source.source}
+          </a>
+        ) : (
+          <span className="text-slate-400">{source.source}</span>
+        )}
       </div>
       <p className="mt-1 text-slate-700">{source.text}</p>
       <p className="mt-1 text-slate-400">distance: {source.distance}</p>

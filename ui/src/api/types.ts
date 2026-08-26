@@ -9,6 +9,7 @@ export interface Source {
   text: string;
   source: string;
   distance: number;
+  url?: string;
 }
 
 export interface Action {
