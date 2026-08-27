@@ -20,9 +20,14 @@ CREATE TABLE IF NOT EXISTS follow_ups (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- pgvector extension + legal_kb_embeddings (AWS deploy: store migration, PGV-2/PGV-4).
--- NOTE: this file is split on ';' by Database.apply_schema(), so no statement
--- below may contain an internal semicolon. All statements are idempotent.
+-- pgvector extension + legal_kb_embeddings (AWS deploy, PGV-2/PGV-4)
+-- This file is split on semicolons by Database.apply_schema, so every
+-- statement below must stay free of internal semicolons and idempotent
+-- No vector index on embedding: pgvector caps both HNSW and IVFFlat at 2000
+-- dims (verified on 0.8.6) and gemini-embedding-001 emits 3072 dims, so no
+-- index is possible on the raw vector. The corpus is tiny and read-mostly
+-- (seeded once), so an exact sequential scan is fast and correct. If the
+-- corpus grows, switch to a sub-2000-dim embedding model and add HNSW.
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS legal_kb_embeddings (
     id BIGSERIAL PRIMARY KEY,
@@ -33,5 +38,3 @@ CREATE TABLE IF NOT EXISTS legal_kb_embeddings (
     embedding vector(3072) NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS legal_kb_embeddings_embedding_idx
-    ON legal_kb_embeddings USING hnsw (embedding vector_cosine_ops);
