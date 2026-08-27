@@ -1,0 +1,6 @@
+# CDK app local artifacts (never commit)
+*.js
+!jest.config.js
+*.d.ts
+node_modules/
+cdk.out/
