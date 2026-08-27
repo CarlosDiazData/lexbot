@@ -14,6 +14,7 @@ COPY ingest ingest
 COPY agent agent
 COPY api api
 COPY docs docs
+COPY ui/dist ui/dist
 
 RUN pip install --no-cache-dir \
         -e /app/ingest \

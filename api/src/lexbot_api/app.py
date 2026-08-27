@@ -20,6 +20,8 @@ anything else -> HTTP 500 non-retryable.
 
 import logging
 import os
+import random
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -29,21 +31,21 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from lexbot_agent.graph import build_agent
 from lexbot_agent.tools import Database, seed_knowledge
-from lexbot_ingest.embeddings import build_embedder
-from lexbot_ingest.vector_store import VectorStore
+from lexbot_ingest.vector_store import PgVectorStore, VectorStore, build_store
 
 from .telegram import TelegramClient
 from .routers.telegram import UpdateIdCache
 
 logger = logging.getLogger(__name__)
 
-# repo_root/docs/knowledge and repo_root/data/chroma — api/src/lexbot_api/app.py
+# repo_root/docs/knowledge and repo_root/ui/dist — api/src/lexbot_api/app.py
 # -> parents[3] == repo root (also /app when copied into the Docker image).
 DEFAULT_KNOWLEDGE_DIR = Path(__file__).resolve().parents[3] / "docs" / "knowledge"
-DEFAULT_CHROMA_PATH = str(Path(__file__).resolve().parents[3] / "data" / "chroma")
+UI_DIST_DIR = Path(__file__).resolve().parents[3] / "ui" / "dist"
 
 
 class LLMUnavailableError(Exception):
@@ -52,6 +54,35 @@ class LLMUnavailableError(Exception):
 
     code = "llm_unavailable"
     retryable = True
+
+
+def _wait_for_db(
+    database: Database,
+    attempts: int = 36,
+    base_delay: float = 10,
+    max_delay: float = 30,
+) -> None:
+    """Block until the database is reachable (PGV-3, RDS-not-ready).
+
+    Bounded retry: exponential backoff + jitter between pings, ~10 min budget
+    with the defaults. On exhaustion logs CRITICAL and raises — uvicorn exits
+    non-zero so ECS restarts the task (the outer retry loop). Tests inject
+    small attempts/delays.
+    """
+    delay = base_delay
+    for attempt in range(1, attempts + 1):
+        if database.ping():
+            logger.info("database reachable after %d attempt(s)", attempt)
+            return
+        if attempt == attempts:
+            break
+        time.sleep(delay * random.uniform(0.5, 1.5))
+        delay = min(delay * 1.5, max_delay)
+    logger.critical(
+        "database unreachable after %d attempts; raising so the task restarts",
+        attempts,
+    )
+    raise RuntimeError("database unreachable at startup")
 
 
 def get_agent(request: Request) -> Any:
@@ -97,7 +128,7 @@ def create_app(
         if o.strip()
     ]
 
-    store = store or VectorStore(path=DEFAULT_CHROMA_PATH, embedder=build_embedder())
+    store = store or build_store()
     database = db or Database()
     knowledge = knowledge_dir or DEFAULT_KNOWLEDGE_DIR
     agent = agent or build_agent(store=store, db=database)
@@ -115,11 +146,22 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # PGV-3: the pgvector store needs the database reachable before any
+        # schema apply or seed. Bounded retry absorbs RDS-not-ready at first
+        # deploy; exhaustion raises -> uvicorn exits non-zero -> ECS restarts.
+        if isinstance(store, PgVectorStore):
+            _wait_for_db(database)
         # D5: idempotent schema bootstrap (also covers pre-existing db-data
-        # volumes that never saw the compose initdb mount).
+        # volumes that never saw the compose initdb mount). For pgvector this
+        # creates the extension + legal_kb_embeddings DDL (db/init.sql).
         database.apply_schema()
-        # D6: auto-seed knowledge once when the store is empty.
-        if store.count() == 0:
+        # D6 auto-seed. Chroma keeps the count()==0 gate; the pgvector path
+        # seeds unconditionally — chunk_id UNIQUE + ON CONFLICT DO NOTHING make
+        # re-runs insert nothing, and a mid-seed crash resumes cleanly on the
+        # next restart (PGV-4: never partial data, no duplicates).
+        if isinstance(store, PgVectorStore):
+            seed_knowledge(store, knowledge)
+        elif store.count() == 0:
             seed_knowledge(store, knowledge)
         # D1: guarded fail-soft setWebhook — only when both the bot token and
         # the webhook URL are configured; any failure logs and keeps booting.
@@ -198,5 +240,12 @@ def create_app(
     app.include_router(ingest.router)
     app.include_router(health.router)
     app.include_router(telegram.router)
+
+    # INF-4: serve the built UI from the container, same-origin. Mounted AFTER
+    # the routers so /health, /webhook/*, /chat keep winning; the catch-all
+    # root mount only serves unmatched paths (/ , /assets/*). Guarded so dev
+    # runs without a build just skip it.
+    if UI_DIST_DIR.exists():
+        app.mount("/", StaticFiles(directory=UI_DIST_DIR, html=True))
 
     return app
