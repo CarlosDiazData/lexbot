@@ -176,6 +176,10 @@ LexBot talks to Telegram directly through the Bot API — no bridge service.
 Inbound messages hit `POST /webhook/telegram`; the agent's answer is sent back
 to the same chat via `sendMessage`.
 
+> **Production (AWS)**: the webhook URL is the CloudFront endpoint
+> `https://<CloudFrontDomain>/webhook/telegram`, set automatically by the stack —
+> no tunnel needed. See [AWS Deployment](#aws-deployment-milestone-5).
+
 ### Quick path
 
 1. **Create the bot** — talk to [@BotFather](https://t.me/BotFather), run
@@ -207,6 +211,102 @@ to the same chat via `sendMessage`.
 - [ ] `curl localhost:8000/health` returns ok
 - [ ] `scripts/demo-telegram.sh` delivers an outbound message to `TELEGRAM_CHAT_ID`
 - [ ] Message the bot in Telegram — the agent replies in the same chat
+
+## AWS Deployment (Milestone 5)
+
+Production runs as a single CloudFormation stack (`LexBotStack`, defined in `cdk/`)
+in `us-east-1`: CloudFront (HTTPS edge, default `*.cloudfront.net` certificate) →
+ALB (HTTP-only origin) → ECS Fargate (FastAPI + agent + `ui/dist`) → RDS PostgreSQL 15
+(pgvector), plus ECR, Secrets Manager, a $45/month budget alarm, and a GitHub Actions
+OIDC deploy role — no static keys. A push to `main` builds, deploys, and smoke-tests
+the stack (`.github/workflows/deploy.yml`).
+
+**Quick path (first deploy):** `cdk bootstrap` → fill 3 Secrets Manager secrets →
+`cdk deploy -c imageTag=<sha>` → set the `AWS_ROLE_ARN` repository variable → push to
+`main` from then on.
+
+### One-time setup
+
+Run these once, before the first deploy:
+
+1. **Bootstrap CDK** — creates the CDKToolkit bucket/role the deploy role uses. The
+   workflow never bootstraps, so this is a manual prerequisite:
+   ```bash
+   cd cdk && npx cdk bootstrap aws://<account-id>/us-east-1
+   ```
+2. **Fill the three Secrets Manager placeholders** the stack created. Each secret is
+   a JSON object; the container reads the named field:
+
+   | Secret name | JSON value to set |
+   |---|---|
+   | `lexbot/telegram/bot-token` | `{"telegram_bot_token":"<BotFather token>"}` |
+   | `lexbot/telegram/webhook-secret` | `{"telegram_webhook_secret":"<random string>"}` |
+   | `lexbot/gemini/api-key` | `{"gemini_api_key":"<Gemini API key>"}` |
+
+   ```bash
+   aws secretsmanager put-secret-value \
+     --secret-id lexbot/telegram/bot-token \
+     --secret-string '{"telegram_bot_token":"123456:ABC..."}'
+   ```
+   (Console: Secrets Manager → the secret → Retrieve secret value → set a new value.)
+3. **Review `cdk/cdk.json` context** — `budgetEmail` defaults to the placeholder
+   `alerts@example.com` (set it, or pass `-c budgetEmail=`), plus `telegramChatId`,
+   `corsOrigins`, `sourceUrlBase`.
+4. **First deploy** — RDS provisions in ~10–15 min; the API task retries until the
+   database is ready:
+   ```bash
+   cd cdk && npx cdk deploy LexBotStack -c imageTag=<git-sha> --require-approval never
+   ```
+5. **Set the `AWS_ROLE_ARN` repository variable** — copy the `DeployRoleArn` stack
+   output (CloudFormation → `LexBotStack` → Outputs) and save it as a repository
+   **variable** (Settings → Secrets and variables → Actions → Variables), not a
+   secret. The workflow assumes this role via OIDC on every AWS job.
+
+### Deploying
+
+Push to `main` → workflow `deploy`: `ui-build` → `image-build` (ECR push, tag = git
+SHA) → `diff-gate` (blocks destructive RDS changes) → `deploy`
+(`cdk deploy -c imageTag=<sha>`) → `smoke` (hard gate: `https://<CloudFrontDomain>/health`
+must report `db:"ok"` and `vector_count > 0`, then the informational
+`scripts/aws-smoke.sh` load check).
+
+The CloudFront domain is stable across deploys — the stack sets
+`TELEGRAM_WEBHOOK_URL = https://<CloudFrontDomain>/webhook/telegram` automatically and
+the API registers the webhook at startup.
+
+Manual redeploy of a specific image:
+`npx cdk deploy LexBotStack -c imageTag=<sha> --require-approval never`.
+
+### Rollback (INF-5)
+
+| Situation | Restore |
+|---|---|
+| Bad release | Revert the workflow change and redeploy the previous image tag: `npx cdk deploy LexBotStack -c imageTag=<prior-sha> --require-approval never`. `minHealthyPercent: 100` keeps the old task serving while the failed rollover unwinds |
+| RDS / pgvector store broken | Take the app back to the Chroma store: set `STORE_PROVIDER: 'chroma'` in `cdk/lib/lexbot-stack.ts` and redeploy. The API re-seeds the built-in Chroma store from `docs/knowledge` at startup, so knowledge answers no longer depend on RDS |
+| Shut everything down | `npx cdk destroy LexBotStack` — the RDS instance keeps a **final snapshot** (`RemovalPolicy.SNAPSHOT`), so the database can be restored later; CloudWatch logs are retained one month |
+| Webhook missing after a redeploy or cutover | Point `TELEGRAM_WEBHOOK_URL` / `TELEGRAM_WEBHOOK_SECRET` at the current endpoint and run `scripts/demo-telegram.sh` — it re-registers the webhook (with the secret token) and smoke-tests an outbound message |
+
+End-to-end restore: `cdk destroy` → restore the RDS final snapshot (or stay on Chroma
+mode) → redeploy the last good image tag → re-register the webhook via
+`scripts/demo-telegram.sh` → confirm `https://<CloudFrontDomain>/health`.
+
+### Cost and alarms
+
+- **$45/month budget** (`budgetLimitUsd` in `cdk/cdk.json`) → SNS → email at 100% of
+  budget. Set `budgetEmail` before deploying.
+- **Memory alarm** — ECS `MemoryUtilized ≥ 85%` of the 1024 MiB task for 10 minutes →
+  the same SNS topic. If it fires, scale up:
+  `npx cdk deploy LexBotStack -c imageTag=<sha> -c taskMemoryMiB=2048 -c taskCpu=1024`.
+
+### Notes
+
+- **No custom domain** — the stack uses CloudFront's default `*.cloudfront.net`
+  certificate, so HTTPS works with nothing to buy or configure. If you own a domain,
+  ACM + Route 53 + ALB HTTPS can replace CloudFront (same design otherwise).
+- **No vector index** — pgvector caps HNSW/IVFFlat indexes at 2000 dimensions and
+  `gemini-embedding-001` produces 3072-dim vectors, so `legal_kb_embeddings` has no
+  index and queries are exact sequential scans. Fine for the small read-mostly corpus;
+  revisit if the knowledge base grows.
 
 ## Running Tests
 
