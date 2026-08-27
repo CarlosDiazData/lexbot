@@ -1,0 +1,241 @@
+name: deploy
+
+# CI/CD for the LexBot AWS stack (SDD aws-deploy, AWS-15/16/18).
+#
+# Flow: ui-build -> image-build (push to ECR) -> diff-gate (destructive RDS
+# guard) -> deploy (cdk, imageTag = git SHA) -> smoke (health gate + the
+# informational scripts/aws-smoke.sh load check). integration-pytest runs the
+# pgvector store tests against a pgvector/pgvector:pg15 service container.
+#
+# OIDC, no static keys: every AWS job uses aws-actions/configure-aws-credentials
+# to assume the stack's DeployRole (CfnOutput `DeployRoleArn`). The role's
+# trust policy binds it to repo:CarlosDiazData/lexbot:* and its permissions are
+# least-privilege (cloudformation on this stack, the CDKToolkit bucket, ECR
+# push on `lexbot`, ECS update, iam:PassRole, secrets read, cloudwatch read).
+#
+# One-time setup (manual, pre-first-deploy):
+#   - `cdk bootstrap` once in us-east-1 (documented in README).
+#   - Set the repository VARIABLE `AWS_ROLE_ARN` to the `DeployRoleArn` stack
+#     output (visible after the first `cdk deploy`).
+#   - Fill the three Secrets Manager placeholders the stack created
+#     (lexbot/telegram/bot-token, lexbot/telegram/webhook-secret,
+#     lexbot/gemini/api-key) so the deployed container gets real credentials.
+#   - Review cdk/cdk.json context (budgetEmail, telegramChatId, corsOrigins).
+#
+# Rollback: revert the workflow and redeploy the prior image tag; manual
+# `cdk deploy -c imageTag=<sha>` stays possible at any time.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: lexbot-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: LexBotStack
+  IMAGE_TAG: ${{ github.sha }}
+  ECR_REPOSITORY: lexbot
+
+jobs:
+  ui-build:
+    name: Build UI (ui/dist)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install + build
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+          retention-days: 1
+
+  image-build:
+    name: Build + push image to ECR
+    needs: ui-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Resolve ECR registry (account from the assumed role)
+        id: registry
+        run: |
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          echo "uri=${account}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "${{ steps.registry.outputs.uri }}"
+      - name: Build + push (tag = git SHA)
+        # api/Dockerfile copies ui/dist from the repo root — the artifact
+        # download above restores it before the build.
+        run: |
+          docker build -f api/Dockerfile -t "${{ steps.registry.outputs.uri }}:${IMAGE_TAG}" .
+          docker push "${{ steps.registry.outputs.uri }}:${IMAGE_TAG}"
+
+  diff-gate:
+    name: cdk diff gate (destructive RDS guard)
+    needs: image-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cdk/package-lock.json
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Install CDK deps
+        working-directory: cdk
+        run: npm ci
+      - name: Diff + fail on destructive RDS change
+        working-directory: cdk
+        run: |
+          set +e
+          npx cdk diff -c imageTag="$IMAGE_TAG" > /tmp/cdk-diff.txt 2>&1
+          diff_exit=$?
+          set -e
+          cat /tmp/cdk-diff.txt
+          # Data-loss guard: ANY update ([~]) or delete ([-]) marker on the
+          # AWS::RDS::DBInstance blocks the deploy — most DB property changes
+          # force a CloudFormation replacement, and the SNAPSHOT removal policy
+          # is not an automated restore. Full diff stays visible in the logs.
+          if grep -Eq '^\[[-~]\] AWS::RDS::DBInstance' /tmp/cdk-diff.txt; then
+            echo "::error::Destructive RDS change detected in cdk diff — deploy blocked. Review the diff above."
+            exit 1
+          fi
+          # Exit 0 = no differences, 1 = differences exist (both expected
+          # mid-release); >= 2 is a real diff failure.
+          if [ "$diff_exit" -ge 2 ]; then
+            echo "::error::cdk diff failed with exit $diff_exit"
+            exit 1
+          fi
+          echo "diff-gate passed: no destructive RDS change"
+
+  deploy:
+    name: cdk deploy (imageTag = git SHA)
+    needs: diff-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cdk/package-lock.json
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Install CDK deps
+        working-directory: cdk
+        run: npm ci
+      - name: Deploy stack
+        working-directory: cdk
+        run: npx cdk deploy "$STACK_NAME" -c imageTag="$IMAGE_TAG" --require-approval never
+
+  smoke:
+    name: Smoke (health gate + aws-smoke.sh)
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Resolve CloudFront domain from stack outputs
+        id: domain
+        run: |
+          domain="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDomain'].OutputValue" --output text)"
+          if [[ -z "$domain" || "$domain" == "None" ]]; then
+            echo "::error::CloudFrontDomain output not found for stack $STACK_NAME"
+            exit 1
+          fi
+          echo "domain=$domain" >> "$GITHUB_OUTPUT"
+      - name: Gate — /health db=ok and vector_count>0 (AWS-16)
+        run: |
+          health="$(curl -fsS --max-time 30 "https://${{ steps.domain.outputs.domain }}/health")"
+          echo "health: $health"
+          db="$(printf '%s' "$health" | jq -r .db)"
+          count="$(printf '%s' "$health" | jq -r .vector_count)"
+          if [[ "$db" != "ok" ]]; then
+            echo "::error::health db=$db (expected ok)"
+            exit 1
+          fi
+          if [[ "$count" -le 0 ]]; then
+            echo "::error::health vector_count=$count (expected > 0)"
+            exit 1
+          fi
+          echo "gate passed: db=$db vector_count=$count"
+      - name: aws-smoke.sh (informational — AWS-17)
+        # The script exits non-zero on gate/load failure but is informational
+        # here: AWS-16 already gated the release, and a broken /chat must not
+        # hide the deploy result. Full output stays in the logs.
+        continue-on-error: true
+        run: BASE_URL="https://${{ steps.domain.outputs.domain }}" ./scripts/aws-smoke.sh
+
+  integration-pytest:
+    name: pgvector store integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ingest/pyproject.toml
+      - name: Install lexbot-ingest + dev deps
+        run: pip install -e "ingest[dev]"
+      - name: Store tests against the pgvector service container
+        env:
+          TEST_DATABASE_URL: postgresql://test:test@localhost:5432/test
+        run: python -m pytest ingest/tests/test_pgvector_store.py -q
