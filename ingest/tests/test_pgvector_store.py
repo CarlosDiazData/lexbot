@@ -95,12 +95,21 @@ def test_duplicate_chunk_id_is_idempotent(pg_store):
     assert pg_store.count() == 1, "re-adding the same chunk_id must not duplicate"
 
 
-def test_dim_mismatch_raises_at_init(pg_store):
+def test_dim_mismatch_raises_on_validation(pg_store):
     # The fixture table is vector(64); asking for 3072 dims must fail fast via
     # atttypmod validation instead of corrupting queries.
+    with pytest.raises(ValueError):
+        store = PgVectorStore(
+            dsn=TEST_DATABASE_URL,
+            embedder=FakeEmbedder(dimensions=DIMS),
+            dimensions=3072,
+        )
+        store.validate_dimensions()
+
     with pytest.raises(ValueError):
         PgVectorStore(
             dsn=TEST_DATABASE_URL,
             embedder=FakeEmbedder(dimensions=DIMS),
             dimensions=3072,
+            validate_at_init=True,
         )

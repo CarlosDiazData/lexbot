@@ -70,6 +70,22 @@ class VectorStore:
         )
 
 
+def get_database_dsn(dsn: str | None = None) -> str | None:
+    """Resolve database DSN from argument, DATABASE_URL, or PG* env vars."""
+    if dsn:
+        return dsn
+    if os.getenv("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
+    host = os.getenv("PGHOST") or os.getenv("DATABASE_HOST")
+    if host:
+        user = os.getenv("PGUSER") or os.getenv("DATABASE_USERNAME", "lexbot")
+        password = os.getenv("PGPASSWORD") or os.getenv("DATABASE_PASSWORD", "lexbot")
+        port = os.getenv("PGPORT") or os.getenv("DATABASE_PORT", "5432")
+        dbname = os.getenv("PGDATABASE") or os.getenv("DATABASE_NAME", "lexbot")
+        return f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+    return None
+
+
 class PgVectorStore:
     """pgvector-backed store (AWS deploy, PGV-2).
 
@@ -78,7 +94,7 @@ class PgVectorStore:
     `add_chunks` embeds once and inserts with ON CONFLICT (chunk_id) DO NOTHING
     in a single transaction; `query` uses cosine distance (<=>) and returns the
     exact Chroma return shape {id, text, metadata:{source, chunk_index}, distance}.
-    Dimensions are validated at init against the table's atttypmod.
+    Dimensions can be validated against the table's atttypmod via validate_dimensions().
     """
 
     def __init__(
@@ -87,19 +103,21 @@ class PgVectorStore:
         embedder: Embedder,
         table: str = "legal_kb_embeddings",
         dimensions: int = 3072,
+        validate_at_init: bool = False,
     ) -> None:
         self._dsn = dsn
         self._embedder = embedder
         self._table = table
         self._dimensions = dimensions
-        self._validate_dimensions()
+        if validate_at_init:
+            self.validate_dimensions()
 
     def _connect(self):
         conn = psycopg.connect(self._dsn)
         register_vector(conn)  # adapt list<->vector in params/rows
         return conn
 
-    def _validate_dimensions(self) -> None:
+    def validate_dimensions(self) -> None:
         """Fail fast if the table's embedding dims don't match `dimensions`.
 
         pgvector stores the declared vector(n) length directly in atttypmod
@@ -175,18 +193,18 @@ class PgVectorStore:
 def build_store(provider: str | None = None) -> VectorStore | PgVectorStore:
     """STORE_PROVIDER factory: chroma (default) | pgvector.
 
-    Mirrors build_embedder's dev posture: pgvector with no DATABASE_URL warns
-    and falls back to Chroma so local dev keeps working without a database.
+    Mirrors build_embedder's dev posture: pgvector with no database connection
+    warns and falls back to Chroma so local dev keeps working without a database.
     """
     provider = provider or os.getenv("STORE_PROVIDER", "chroma")
     if provider == "chroma":
         return VectorStore(path=DEFAULT_CHROMA_PATH, embedder=build_embedder())
     if provider == "pgvector":
-        dsn = os.getenv("DATABASE_URL")
+        dsn = get_database_dsn()
         if not dsn:
             logger.warning(
-                "STORE_PROVIDER=pgvector but DATABASE_URL is unset — falling back to "
-                "Chroma (set DATABASE_URL to use the pgvector store)"
+                "STORE_PROVIDER=pgvector but no database connection configured — falling back to "
+                "Chroma (set DATABASE_URL or PG* variables to use the pgvector store)"
             )
             return VectorStore(path=DEFAULT_CHROMA_PATH, embedder=build_embedder())
         return PgVectorStore(dsn=dsn, embedder=build_embedder())

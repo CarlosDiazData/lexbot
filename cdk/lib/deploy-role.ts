@@ -51,12 +51,15 @@ export class DeployRole extends Construct {
 
     const stack = cdk.Stack.of(this);
 
-    const provider = new iam.OpenIdConnectProvider(this, 'GithubOidcProvider', {
-      url: 'https://token.actions.githubusercontent.com',
-      clientIds: ['sts.amazonaws.com'],
-      // GitHub's OIDC signing cert thumbprint (documented constant).
-      thumbprints: ['6938fd4d98bab03faadb97b34396831e3780aea1'],
-    });
+    // GitHub's OIDC provider already exists in this account (created outside
+    // this stack, shared with other repos/workflows). Import it instead of
+    // creating it: a plain create fails with EntityAlreadyExists and the CDK
+    // custom resource has no import-if-exists path.
+    const provider = iam.OpenIdConnectProvider.fromOpenIdConnectProviderArn(
+      this,
+      'GithubOidcProvider',
+      `arn:${cdk.Aws.PARTITION}:iam::${cdk.Aws.ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com`,
+    );
 
     this.role = new iam.Role(this, 'GithubDeployRole', {
       assumedBy: new iam.OpenIdConnectPrincipal(provider).withConditions({

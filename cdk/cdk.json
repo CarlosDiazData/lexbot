@@ -20,7 +20,7 @@
     "budgetLimitUsd": 45,
     "taskCpu": 512,
     "taskMemoryMiB": 1024,
-    "budgetEmail": "alerts@example.com",
+    "budgetEmail": "carlosdiazdata@gmail.com",
     "telegramChatId": "",
     "corsOrigins": "http://localhost:5173",
     "sourceUrlBase": "https://github.com/CarlosDiazData/lexbot/blob/main/docs/knowledge"

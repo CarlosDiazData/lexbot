@@ -77,9 +77,14 @@ export class LexBotStack extends cdk.Stack {
     // standalone DB instances).
     const database = new rds.DatabaseInstance(this, 'Database', {
       engine: rds.DatabaseInstanceEngine.postgres({
-        version: rds.PostgresEngineVersion.VER_15_5,
+        // 15.5 was retired by AWS ("Cannot find version 15.5"); 15.8 is the
+        // oldest 15.x minor still available in us-east-1.
+        version: rds.PostgresEngineVersion.VER_15_8,
       }),
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.SMALL),
+      // t4g.micro: free-plan accounts reject any larger RDS size at create
+      // ("This instance size isn't available with free plan accounts").
+      // 1 GiB RAM fits the small corpus; revisit when the KB grows.
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MICRO),
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       credentials: rds.Credentials.fromGeneratedSecret('lexbot', {
@@ -90,7 +95,9 @@ export class LexBotStack extends cdk.Stack {
       multiAz: false,
       storageEncrypted: true,
       removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
-      backupRetention: cdk.Duration.days(7),
+      // Free-tier accounts cap RDS backup retention at 1 day (7 days is
+      // rejected with a 400 on create). 1 day still gives PITR.
+      backupRetention: cdk.Duration.days(1),
     });
     const dbSecret = database.secret!;
 
@@ -173,28 +180,6 @@ export class LexBotStack extends cdk.Stack {
       memoryLimitMiB: taskMemoryMiB,
     });
 
-    // DATABASE_URL is composed at deploy time (design INF-3): generated-secret
-    // password + RDS endpoint, resolved via the Secrets Manager dynamic
-    // reference by ECS at task launch. The execution role therefore needs
-    // GetSecretValue on the RDS master secret (not auto-added for plain env).
-    const databaseUrl = cdk.Fn.join('', [
-      'postgresql://',
-      dbSecret.secretValueFromJson('username').unsafeUnwrap(),
-      ':',
-      dbSecret.secretValueFromJson('password').unsafeUnwrap(),
-      '@',
-      database.dbInstanceEndpointAddress,
-      ':',
-      database.dbInstanceEndpointPort,
-      '/lexbot',
-    ]);
-    taskDef.executionRole?.addToPrincipalPolicy(
-      new iam.PolicyStatement({
-        actions: ['secretsmanager:GetSecretValue'],
-        resources: [dbSecret.secretArn],
-      }),
-    );
-
     const webhookUrl = cdk.Fn.join('', [
       'https://',
       distribution.distributionDomainName,
@@ -209,7 +194,9 @@ export class LexBotStack extends cdk.Stack {
       EMBEDDING_PROVIDER: 'gemini',
       CORS_ORIGINS: corsOrigins,
       SOURCE_URL_BASE: sourceUrlBase,
-      DATABASE_URL: databaseUrl,
+      PGHOST: database.dbInstanceEndpointAddress,
+      PGPORT: database.dbInstanceEndpointPort,
+      PGDATABASE: 'lexbot',
     };
     if (llmModel) {
       environment.LLM_MODEL = llmModel;
@@ -224,6 +211,8 @@ export class LexBotStack extends cdk.Stack {
         TELEGRAM_BOT_TOKEN: ecs.Secret.fromSecretsManager(botTokenSecret, 'telegram_bot_token'),
         TELEGRAM_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(webhookSecret, 'telegram_webhook_secret'),
         GEMINI_API_KEY: ecs.Secret.fromSecretsManager(geminiKeySecret, 'gemini_api_key'),
+        PGUSER: ecs.Secret.fromSecretsManager(dbSecret, 'username'),
+        PGPASSWORD: ecs.Secret.fromSecretsManager(dbSecret, 'password'),
       },
     });
     void container;
@@ -239,6 +228,8 @@ export class LexBotStack extends cdk.Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       assignPublicIp: false,
     });
+
+    database.connections.allowDefaultPortFrom(service);
 
     listener.addTargets('FargateTargets', {
       port: 8000,

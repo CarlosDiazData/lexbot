@@ -49,17 +49,11 @@ function makeStack(): { template: Template } {
 }
 
 describe('DeployRole', () => {
-  test('creates the GitHub OIDC provider with the documented thumbprint', () => {
+  test('references the GitHub OIDC provider (imported by ARN)', () => {
     const { template } = makeStack();
-    // Recent aws-cdk-lib versions back the OIDC provider with a custom
-    // resource (thumbprint auto-management); the deployed provider carries
-    // the documented URL, client id and GitHub thumbprint.
-    template.resourceCountIs('Custom::AWSCDKOpenIdConnectProvider', 1);
-    template.hasResourceProperties('Custom::AWSCDKOpenIdConnectProvider', {
-      Url: 'https://token.actions.githubusercontent.com',
-      ClientIDList: ['sts.amazonaws.com'],
-      ThumbprintList: ['6938fd4d98bab03faadb97b34396831e3780aea1'],
-    });
+    // GitHub's OIDC provider is imported from the account ARN to prevent
+    // EntityAlreadyExists conflicts with pre-existing providers.
+    template.resourceCountIs('Custom::AWSCDKOpenIdConnectProvider', 0);
   });
 
   test('role is assumed only by the lexbot repo via web identity (no static keys)', () => {

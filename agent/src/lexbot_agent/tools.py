@@ -48,7 +48,20 @@ class Database:
     """
 
     def __init__(self, dsn: str | None = None):
-        self.dsn = dsn or os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+        self.dsn = dsn or self._resolve_dsn()
+
+    @staticmethod
+    def _resolve_dsn() -> str:
+        if os.getenv("DATABASE_URL"):
+            return os.environ["DATABASE_URL"]
+        host = os.getenv("PGHOST") or os.getenv("DATABASE_HOST")
+        if host:
+            user = os.getenv("PGUSER") or os.getenv("DATABASE_USERNAME", "lexbot")
+            password = os.getenv("PGPASSWORD") or os.getenv("DATABASE_PASSWORD", "lexbot")
+            port = os.getenv("PGPORT") or os.getenv("DATABASE_PORT", "5432")
+            dbname = os.getenv("PGDATABASE") or os.getenv("DATABASE_NAME", "lexbot")
+            return f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+        return DEFAULT_DATABASE_URL
 
     def _connect(self):
         return psycopg.connect(self.dsn)

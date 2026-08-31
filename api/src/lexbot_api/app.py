@@ -156,10 +156,11 @@ def create_app(
         # creates the extension + legal_kb_embeddings DDL (db/init.sql).
         database.apply_schema()
         # D6 auto-seed. Chroma keeps the count()==0 gate; the pgvector path
-        # seeds unconditionally — chunk_id UNIQUE + ON CONFLICT DO NOTHING make
-        # re-runs insert nothing, and a mid-seed crash resumes cleanly on the
-        # next restart (PGV-4: never partial data, no duplicates).
+        # validates dimensions and seeds unconditionally — chunk_id UNIQUE + ON CONFLICT
+        # DO NOTHING make re-runs insert nothing, and a mid-seed crash resumes cleanly
+        # on the next restart (PGV-4: never partial data, no duplicates).
         if isinstance(store, PgVectorStore):
+            store.validate_dimensions()
             seed_knowledge(store, knowledge)
         elif store.count() == 0:
             seed_knowledge(store, knowledge)

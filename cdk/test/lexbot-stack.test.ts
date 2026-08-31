@@ -37,11 +37,11 @@ describe('LexBotStack', () => {
       LaunchType: 'FARGATE',
     });
 
-    // RDS PostgreSQL 15, db.t4g.small, final snapshot retained on removal
+    // RDS PostgreSQL 15, db.t4g.micro (Free Tier compatible), final snapshot retained on removal
     template.resourceCountIs('AWS::RDS::DBInstance', 1);
     template.hasResourceProperties('AWS::RDS::DBInstance', {
       Engine: 'postgres',
-      DBInstanceClass: 'db.t4g.small',
+      DBInstanceClass: 'db.t4g.micro',
       EngineVersion: Match.stringLikeRegexp('15.*'),
       MultiAZ: false,
       DBName: 'lexbot',
@@ -94,7 +94,7 @@ describe('LexBotStack', () => {
     });
   });
 
-  test('wires the three app secrets and composed DATABASE_URL (AWS-4)', () => {
+  test('wires the app secrets, database connection, and security groups (AWS-4)', () => {
     const template = Template.fromStack(makeStack());
 
     // Placeholder secrets exist under the documented names
@@ -108,9 +108,7 @@ describe('LexBotStack', () => {
       Name: 'lexbot/gemini/api-key',
     });
 
-    // Container definition wires all three as task-definition secrets
-    // plus DATABASE_URL in the environment. NOTE: Match.arrayWith patterns
-    // must be listed in array order (DATABASE_URL is the last env entry).
+    // Container definition wires secrets + PG* environment variables
     template.hasResourceProperties('AWS::ECS::TaskDefinition', {
       ContainerDefinitions: Match.arrayWith([
         Match.objectLike({
@@ -119,17 +117,27 @@ describe('LexBotStack', () => {
             Match.objectLike({ Name: 'TELEGRAM_BOT_TOKEN' }),
             Match.objectLike({ Name: 'TELEGRAM_WEBHOOK_SECRET' }),
             Match.objectLike({ Name: 'GEMINI_API_KEY' }),
+            Match.objectLike({ Name: 'PGUSER' }),
+            Match.objectLike({ Name: 'PGPASSWORD' }),
           ]),
           Environment: Match.arrayWith([
             Match.objectLike({ Name: 'TELEGRAM_WEBHOOK_URL' }),
             Match.objectLike({ Name: 'STORE_PROVIDER', Value: 'pgvector' }),
-            Match.objectLike({ Name: 'DATABASE_URL' }),
+            Match.objectLike({ Name: 'PGHOST' }),
+            Match.objectLike({ Name: 'PGPORT' }),
+            Match.objectLike({ Name: 'PGDATABASE', Value: 'lexbot' }),
           ]),
         }),
       ]),
     });
 
-    // Execution role can resolve the RDS secret used by DATABASE_URL
+    // RDS Security Group allows ingress from ECS Service
+    template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
+      IpProtocol: 'tcp',
+      Description: Match.stringLikeRegexp('.*ServiceSecurityGroup.*'),
+    });
+
+    // Execution role can resolve secrets
     template.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: {
         Statement: Match.arrayWith([
@@ -166,15 +174,8 @@ describe('LexBotStack', () => {
   test('includes the OIDC deploy role scoped to the app stack (AWS-6)', () => {
     const template = Template.fromStack(makeStack());
 
-    // Recent aws-cdk-lib versions back the OIDC provider with a custom
-    // resource (thumbprint auto-management); the deployed provider carries
-    // the documented URL, client id and GitHub thumbprint.
-    template.resourceCountIs('Custom::AWSCDKOpenIdConnectProvider', 1);
-    template.hasResourceProperties('Custom::AWSCDKOpenIdConnectProvider', {
-      Url: 'https://token.actions.githubusercontent.com',
-      ClientIDList: ['sts.amazonaws.com'],
-      ThumbprintList: ['6938fd4d98bab03faadb97b34396831e3780aea1'],
-    });
+    // GitHub's OIDC provider is imported from the account ARN
+    template.resourceCountIs('Custom::AWSCDKOpenIdConnectProvider', 0);
 
     template.hasResourceProperties('AWS::IAM::Role', {
       AssumeRolePolicyDocument: {
