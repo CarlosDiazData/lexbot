@@ -31,6 +31,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   delete import.meta.env.VITE_API_URL;
 });
@@ -113,12 +114,21 @@ describe("chat", () => {
 });
 
 describe("base URL", () => {
-  it("targets the default http://localhost:8000 when VITE_API_URL is unset", async () => {
+  it("targets the default http://localhost:8000 when VITE_API_URL is unset in dev", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ answer: "a", sources: [], actions: [] }));
 
     await chat("hello");
 
     expect(fetchMock).toHaveBeenCalledWith(`${DEFAULT_BASE_URL}/chat`, expect.objectContaining({ method: "POST" }));
+  });
+
+  it("targets relative /chat in production when VITE_API_URL is unset", async () => {
+    vi.stubEnv("DEV", false);
+    fetchMock.mockResolvedValue(jsonResponse({ answer: "a", sources: [], actions: [] }));
+
+    await chat("hello");
+
+    expect(fetchMock).toHaveBeenCalledWith("/chat", expect.objectContaining({ method: "POST" }));
   });
 
   it("targets the VITE_API_URL override when set", async () => {

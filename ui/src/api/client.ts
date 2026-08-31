@@ -14,9 +14,10 @@ const MAX_RETRIES = 1;
 
 function getBaseUrl(): string {
   const configured = import.meta.env.VITE_API_URL;
-  return typeof configured === "string" && configured.trim() !== ""
-    ? configured.trim()
-    : DEFAULT_BASE_URL;
+  if (typeof configured === "string" && configured.trim() !== "") {
+    return configured.trim();
+  }
+  return import.meta.env.DEV ? DEFAULT_BASE_URL : "";
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
