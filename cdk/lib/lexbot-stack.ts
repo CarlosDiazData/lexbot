@@ -145,6 +145,7 @@ export class LexBotStack extends cdk.Stack {
     const alb = new elbv2.ApplicationLoadBalancer(this, 'Alb', {
       vpc,
       internetFacing: true,
+      idleTimeout: cdk.Duration.seconds(120),
     });
     const listener = alb.addListener('HttpListener', {
       port: 80,
@@ -161,6 +162,8 @@ export class LexBotStack extends cdk.Stack {
       defaultBehavior: {
         origin: new origins.HttpOrigin(alb.loadBalancerDnsName, {
           protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+          readTimeout: cdk.Duration.seconds(60),
+          keepaliveTimeout: cdk.Duration.seconds(30),
         }),
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,

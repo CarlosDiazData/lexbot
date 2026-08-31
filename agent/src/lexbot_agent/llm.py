@@ -16,7 +16,7 @@ from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
 
@@ -72,7 +72,10 @@ def build_llm(provider: str | None = None) -> BaseChatModel:
             )
             return FakeLLM(responses=[AIMessage(content="")])
         return ChatGoogleGenerativeAI(
-            model=model or DEFAULT_GEMINI_MODEL, temperature=0, google_api_key=api_key
+            model=model or DEFAULT_GEMINI_MODEL,
+            temperature=0,
+            google_api_key=api_key,
+            max_retries=2,
         )
     if provider == "openai":
         if not os.getenv("OPENAI_API_KEY"):
