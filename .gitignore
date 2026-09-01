@@ -25,3 +25,7 @@ data/
 .vscode/
 .idea/
 .DS_Store
+
+# Tooling
+.atl/
+.codegraph/

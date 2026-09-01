@@ -225,88 +225,97 @@ the stack (`.github/workflows/deploy.yml`).
 `cdk deploy -c imageTag=<sha>` → set the `AWS_ROLE_ARN` repository variable → push to
 `main` from then on.
 
-### One-time setup
+### Prerequisites & One-time Setup
 
-Run these once, before the first deploy:
+Run these once before the first deploy:
 
-1. **Bootstrap CDK** — creates the CDKToolkit bucket/role the deploy role uses. The
-   workflow never bootstraps, so this is a manual prerequisite:
+1. **Bootstrap CDK** — creates the CDKToolkit bucket/role used by CloudFormation and CI/CD:
    ```bash
    cd cdk && npx cdk bootstrap aws://<account-id>/us-east-1
    ```
-2. **Fill the three Secrets Manager placeholders** the stack created. Each secret is
-   a JSON object; the container reads the named field:
 
-   | Secret name | JSON value to set |
-   |---|---|
-   | `lexbot/telegram/bot-token` | `{"telegram_bot_token":"<BotFather token>"}` |
-   | `lexbot/telegram/webhook-secret` | `{"telegram_webhook_secret":"<random string>"}` |
-   | `lexbot/gemini/api-key` | `{"gemini_api_key":"<Gemini API key>"}` |
+2. **Configure Secrets in AWS Secrets Manager** — The stack defines three Secrets Manager secrets. Populate them with your real credentials (in `us-east-1`):
 
+   | Secret name | Key name | Description / How to obtain |
+   |---|---|---|
+   | `lexbot/gemini/api-key` | `gemini_api_key` | Google AI Studio API Key |
+   | `lexbot/telegram/bot-token` | `telegram_bot_token` | Token from [@BotFather](https://t.me/BotFather) (`/newbot` or `/mybots`) |
+   | `lexbot/telegram/webhook-secret` | `telegram_webhook_secret` | Secure random string (e.g. `openssl rand -hex 20`) |
+
+   You can set them via AWS CLI:
    ```bash
+   # 1. Gemini API Key
    aws secretsmanager put-secret-value \
+     --region us-east-1 \
+     --secret-id lexbot/gemini/api-key \
+     --secret-string '{"gemini_api_key":"<YOUR_GEMINI_API_KEY>"}'
+
+   # 2. Telegram Bot Token
+   aws secretsmanager put-secret-value \
+     --region us-east-1 \
      --secret-id lexbot/telegram/bot-token \
-     --secret-string '{"telegram_bot_token":"123456:ABC..."}'
+     --secret-string '{"telegram_bot_token":"<YOUR_BOTFATHER_TOKEN>"}'
+
+   # 3. Telegram Webhook Secret
+   aws secretsmanager put-secret-value \
+     --region us-east-1 \
+     --secret-id lexbot/telegram/webhook-secret \
+     --secret-string "{\"telegram_webhook_secret\":\"$(openssl rand -hex 20)\"}"
    ```
-   (Console: Secrets Manager → the secret → Retrieve secret value → set a new value.)
-3. **Review `cdk/cdk.json` context** — `budgetEmail` defaults to the placeholder
-   `alerts@example.com` (set it, or pass `-c budgetEmail=`), plus `telegramChatId`,
-   `corsOrigins`, `sourceUrlBase`.
-4. **First deploy** — RDS provisions in ~10–15 min; the API task retries until the
-   database is ready:
+
+3. **Review `cdk/cdk.json` Context**:
+   - Set `budgetEmail` to your real email for budget and memory alert notifications.
+   - Adjust `telegramChatId` if you want default outbound notification target.
+   - Configure `corsOrigins` or `sourceUrlBase` if using a custom origin.
+
+4. **First Deploy (CLI)**:
+   RDS provisions in ~10–15 minutes; the API task retries connecting until the database is ready:
    ```bash
    cd cdk && npx cdk deploy LexBotStack -c imageTag=<git-sha> --require-approval never
    ```
-5. **Set the `AWS_ROLE_ARN` repository variable** — copy the `DeployRoleArn` stack
-   output (CloudFormation → `LexBotStack` → Outputs) and save it as a repository
-   **variable** (Settings → Secrets and variables → Actions → Variables), not a
-   secret. The workflow assumes this role via OIDC on every AWS job.
 
-### Deploying
+5. **Set the `AWS_ROLE_ARN` Repository Variable**:
+   Copy the `DeployRoleArn` stack output (from CloudFormation outputs) and save it as a repository **variable** in GitHub (`Settings → Secrets and variables → Actions → Variables`), named `AWS_ROLE_ARN`. The CI/CD workflow assumes this role via OIDC.
 
-Push to `main` → workflow `deploy`: `ui-build` → `image-build` (ECR push, tag = git
-SHA) → `diff-gate` (blocks destructive RDS changes) → `deploy`
-(`cdk deploy -c imageTag=<sha>`) → `smoke` (hard gate: `https://<CloudFrontDomain>/health`
-must report `db:"ok"` and `vector_count > 0`, then the informational
-`scripts/aws-smoke.sh` load check).
+### Deploying & Lifecycle
 
-The CloudFront domain is stable across deploys — the stack sets
-`TELEGRAM_WEBHOOK_URL = https://<CloudFrontDomain>/webhook/telegram` automatically and
-the API registers the webhook at startup.
+- **Automated CI/CD**: Pushes to `main` run `.github/workflows/deploy.yml`:
+  `ui-build` → `image-build` (ECR push, tag = git SHA) → `diff-gate` (blocks destructive RDS changes) → `deploy` (`cdk deploy -c imageTag=<sha>`) → `smoke` gate.
+- **Telegram Webhook Registration**:
+  CloudFront provides a stable HTTPS endpoint across deployments. The ECS task automatically calls Telegram's `setWebhook` at startup using the CloudFront domain (`https://<CloudFrontDomain>/webhook/telegram`) and the secret token.
+- **Updating Secrets Post-Deploy**:
+  If you update values in Secrets Manager after the stack is already running, force ECS to start new tasks to reload the secrets:
+  ```bash
+  aws ecs update-service \
+    --region us-east-1 \
+    --cluster <ClusterName> \
+    --service <ServiceName> \
+    --force-new-deployment
+  ```
+- **Verifying Telegram Webhook**:
+  ```bash
+  curl -fsS "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
+  ```
 
-Manual redeploy of a specific image:
-`npx cdk deploy LexBotStack -c imageTag=<sha> --require-approval never`.
-
-### Rollback (INF-5)
+### Rollback & Disaster Recovery (INF-5)
 
 | Situation | Restore |
 |---|---|
-| Bad release | Revert the workflow change and redeploy the previous image tag: `npx cdk deploy LexBotStack -c imageTag=<prior-sha> --require-approval never`. `minHealthyPercent: 100` keeps the old task serving while the failed rollover unwinds |
-| RDS / pgvector store broken | Take the app back to the Chroma store: set `STORE_PROVIDER: 'chroma'` in `cdk/lib/lexbot-stack.ts` and redeploy. The API re-seeds the built-in Chroma store from `docs/knowledge` at startup, so knowledge answers no longer depend on RDS |
-| Shut everything down | `npx cdk destroy LexBotStack` — the RDS instance keeps a **final snapshot** (`RemovalPolicy.SNAPSHOT`), so the database can be restored later; CloudWatch logs are retained one month |
-| Webhook missing after a redeploy or cutover | Point `TELEGRAM_WEBHOOK_URL` / `TELEGRAM_WEBHOOK_SECRET` at the current endpoint and run `scripts/demo-telegram.sh` — it re-registers the webhook (with the secret token) and smoke-tests an outbound message |
+| Bad release | Revert the change and redeploy the previous image tag: `npx cdk deploy LexBotStack -c imageTag=<prior-sha> --require-approval never`. `minHealthyPercent: 100` keeps the old task serving while the failed rollover unwinds |
+| RDS / pgvector store broken | Fallback to Chroma: set `STORE_PROVIDER: 'chroma'` in `cdk/lib/lexbot-stack.ts` and redeploy. The API re-seeds Chroma from `docs/knowledge` at startup |
+| Shut down environment | `npx cdk destroy LexBotStack` — RDS keeps a **final snapshot** (`RemovalPolicy.SNAPSHOT`), so data is preserved; CloudWatch logs are retained 30 days |
+| Webhook missing / desynced | Point `TELEGRAM_WEBHOOK_URL` / `TELEGRAM_WEBHOOK_SECRET` at the endpoint and run `scripts/demo-telegram.sh` or call `setWebhook` via curl |
 
-End-to-end restore: `cdk destroy` → restore the RDS final snapshot (or stay on Chroma
-mode) → redeploy the last good image tag → re-register the webhook via
-`scripts/demo-telegram.sh` → confirm `https://<CloudFrontDomain>/health`.
+### Cost and Alarms
 
-### Cost and alarms
-
-- **$45/month budget** (`budgetLimitUsd` in `cdk/cdk.json`) → SNS → email at 100% of
-  budget. Set `budgetEmail` before deploying.
-- **Memory alarm** — ECS `MemoryUtilized ≥ 85%` of the 1024 MiB task for 10 minutes →
-  the same SNS topic. If it fires, scale up:
+- **$45/month budget** (`budgetLimitUsd` in `cdk/cdk.json`) → SNS topic → email notification at 100% of budget.
+- **Memory alarm** — ECS `MemoryUtilized ≥ 85%` of the 1024 MiB task for 10 minutes → SNS topic. If triggered, scale up:
   `npx cdk deploy LexBotStack -c imageTag=<sha> -c taskMemoryMiB=2048 -c taskCpu=1024`.
 
-### Notes
+### Architecture Notes
 
-- **No custom domain** — the stack uses CloudFront's default `*.cloudfront.net`
-  certificate, so HTTPS works with nothing to buy or configure. If you own a domain,
-  ACM + Route 53 + ALB HTTPS can replace CloudFront (same design otherwise).
-- **No vector index** — pgvector caps HNSW/IVFFlat indexes at 2000 dimensions and
-  `gemini-embedding-001` produces 3072-dim vectors, so `legal_kb_embeddings` has no
-  index and queries are exact sequential scans. Fine for the small read-mostly corpus;
-  revisit if the knowledge base grows.
+- **Default Certificate**: The stack uses CloudFront's default `*.cloudfront.net` certificate, allowing instant HTTPS without domain registration.
+- **pgvector Dimensions**: pgvector caps HNSW/IVFFlat indexes at 2000 dimensions; `gemini-embedding-001` generates 3072-dim vectors, so queries perform exact sequential scans across the document corpus.
 
 ## Running Tests
 
@@ -321,15 +330,14 @@ cd ui     && npm test                      # 31 tests
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `/chat` hangs for minutes then 503 | Deprecated Gemini model (e.g. `gemini-2.0-flash` was retired) | Set `LLM_MODEL` to a current model (default is now `gemini-3.6-flash`); rebuild with `docker compose up -d --build api` |
-| `docker compose` commands hang | Host disk full — the daemon cannot write | `df -h`; free space (npm cache, trash) and restart Docker Desktop |
-| `/health` shows `vector_count: -1` | API holds a stale ChromaDB collection handle after an external reset | `docker compose restart api` |
-| `db` fails to bind 5432 | Another project's PostgreSQL occupies the port | Stop that container, or map `5433:5432` for local runs |
-| API answers without citations after adding a key | Store was seeded with FakeEmbedder vectors | Re-seed with the real provider + `--reset`, then restart api (see Quick Start 4) |
-| Citations leak raw paths (`[../docs/knowledge/...]`) | Store seeded by an ingest that stored full paths as `source` | Re-seed with current ingest code + `--reset` (sources are basenames now) |
-| Telegram send fails with 4xx | `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` missing or wrong | Set them in `.env`; verify the token with @BotFather `/getme` |
-| Bot never replies to inbound messages | Webhook not registered, or `TELEGRAM_WEBHOOK_SECRET` mismatch | Check `TELEGRAM_WEBHOOK_URL`/`TELEGRAM_WEBHOOK_SECRET` in `.env`, restart api, and confirm with `getWebhookInfo` |
-| Webhook updates rejected with 401 | Telegram delivers without the secret header | Re-register via `scripts/demo-telegram.sh` (sends `secret_token`), or setWebhook manually with the matching secret |
+| `/chat` hangs or returns 504 | LLM quota limit or timeout | Ensure `DEFAULT_GEMINI_MODEL` is set to a lightweight model (e.g. `gemini-2.5-flash-lite`); CloudFront `readTimeout` is set to 60s |
+| `docker compose` commands hang | Host disk full — daemon cannot write | `df -h`; free space (npm cache, trash) and restart Docker Desktop |
+| `/health` shows `vector_count: -1` | API holds a stale ChromaDB collection handle after external reset | `docker compose restart api` |
+| `db` fails to bind 5432 | Another project's PostgreSQL occupies the port | Stop the conflicting container or map `5433:5432` locally |
+| API answers without citations | Store was seeded with FakeEmbedder vectors | Re-seed with real provider + `--reset`, then restart api |
+| Telegram send fails with 4xx | `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` missing/wrong | Set them in Secrets Manager / `.env`; verify token with @BotFather |
+| Webhook updates rejected with 401 | Telegram delivers without or with wrong secret header | Ensure `lexbot/telegram/webhook-secret` matches the `secret_token` passed to Telegram `setWebhook` |
+| Bot doesn't reply to inbound messages | ECS rolling update in progress or old task serving | Stop stale task or force service redeployment (`aws ecs update-service --force-new-deployment`) |
 
 ## Roadmap
 
@@ -337,7 +345,7 @@ cd ui     && npm test                      # 31 tests
 - [x] **Milestone 2** — Agent + API (LangGraph, FastAPI)
 - [x] **Milestone 3** — Web UI (React 18 + Vite)
 - [x] **Milestone 4** — Telegram channel (Bot API webhook + notify)
-- [ ] **Milestone 5** — Production deployment (AWS CDK)
+- [x] **Milestone 5** — Production deployment (AWS CDK)
 
 ## License
 
