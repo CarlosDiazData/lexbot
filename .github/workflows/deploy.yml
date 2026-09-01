@@ -70,6 +70,9 @@ jobs:
     name: Build + push image to ECR
     needs: ui-build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -101,6 +104,9 @@ jobs:
     name: cdk diff gate (destructive RDS guard)
     needs: image-build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -144,6 +150,9 @@ jobs:
     name: cdk deploy (imageTag = git SHA)
     needs: diff-gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -167,6 +176,9 @@ jobs:
     name: Smoke (health gate + aws-smoke.sh)
     needs: deploy
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
