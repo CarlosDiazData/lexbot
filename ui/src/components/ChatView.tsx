@@ -1,3 +1,4 @@
+import { Sparkles } from "lucide-react";
 import { useChat } from "../hooks/useChat";
 import { useHealth } from "../hooks/useHealth";
 import ChatWindow from "./ChatWindow";
@@ -14,13 +15,46 @@ export default function ChatView() {
   const pending = phase === "sending";
 
   return (
-    <div className="mx-auto flex h-[80vh] max-w-2xl flex-col gap-4 rounded-lg border border-slate-200 bg-white p-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-slate-800">LexBot</h1>
-        <HealthIndicator status={status} />
+    <div className="flex h-screen w-full flex-col bg-slate-50 text-slate-900">
+      {/* Top Navigation Bar */}
+      <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/80 px-4 backdrop-blur-md sm:px-6">
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-2xs">
+            <Sparkles className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm font-bold tracking-tight text-slate-800">LexBot</h1>
+              <span className="hidden rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 border border-blue-200/60 sm:inline-block">
+                Legal AI Assistant
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <HealthIndicator status={status} />
+        </div>
       </header>
-      <ChatWindow messages={messages} error={error} onRetry={retry} />
-      <MessageInput disabled={pending} onSend={sendMessage} />
+
+      {/* Main Conversation Stream */}
+      <main className="mx-auto flex flex-1 w-full max-w-3xl flex-col overflow-hidden">
+        <ChatWindow
+          messages={messages}
+          error={error}
+          pending={pending}
+          onRetry={retry}
+          onSelectPrompt={sendMessage}
+        />
+
+        {/* Floating Input Area */}
+        <div className="shrink-0 p-4 pt-0">
+          <MessageInput disabled={pending} onSend={sendMessage} />
+          <p className="mt-2 text-center text-[11px] text-slate-400">
+            LexBot is an AI assistant providing legal information from firm documents, not formal legal advice.
+          </p>
+        </div>
+      </main>
     </div>
   );
 }
