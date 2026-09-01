@@ -10,9 +10,9 @@ const STATUS_LABEL: Record<HealthStatus, string> = {
 };
 
 const STATUS_TONE: Record<HealthStatus, string> = {
-  ok: "bg-emerald-100 text-emerald-700",
-  degraded: "bg-rose-100 text-rose-700",
-  unknown: "bg-slate-100 text-slate-500",
+  ok: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border dark:border-emerald-800/40",
+  degraded: "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 dark:border dark:border-rose-800/40",
+  unknown: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 dark:border dark:border-slate-700/40",
 };
 
 const STATUS_DOT: Record<HealthStatus, string> = {

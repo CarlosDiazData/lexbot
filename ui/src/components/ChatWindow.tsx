@@ -65,10 +65,10 @@ export default function ChatWindow({
           <Sparkles className="h-7 w-7" />
         </div>
 
-        <h2 className="mb-2 text-2xl font-bold tracking-tight text-slate-800 sm:text-3xl">
+        <h2 className="mb-2 text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-100 sm:text-3xl">
           Where would you like to start?
         </h2>
-        <p className="mb-8 max-w-md text-sm text-slate-500">
+        <p className="mb-8 max-w-md text-sm text-slate-500 dark:text-slate-400">
           Ask LexBot anything — responses appear here. Explore firm policies, client FAQs, contract terms, or consultation details.
         </p>
 
@@ -80,16 +80,16 @@ export default function ChatWindow({
                 key={index}
                 type="button"
                 onClick={() => onSelectPrompt?.(item.prompt)}
-                className="group flex items-start gap-3 rounded-xl border border-slate-200/80 bg-white p-3.5 text-left shadow-2xs transition-all hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-xs cursor-pointer"
+                className="group flex items-start gap-3 rounded-xl border border-slate-200/80 bg-white p-3.5 text-left shadow-2xs transition-all hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-xs dark:border-slate-800/80 dark:bg-slate-900/80 dark:hover:border-blue-500/50 dark:hover:bg-slate-850 cursor-pointer"
               >
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 transition-colors group-hover:bg-blue-600 group-hover:text-white">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 transition-colors group-hover:bg-blue-600 group-hover:text-white dark:bg-blue-950/60 dark:text-blue-400 dark:group-hover:bg-blue-600 dark:group-hover:text-white">
                   <Icon className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <span className="block text-xs font-semibold text-slate-800 group-hover:text-blue-600">
+                  <span className="block text-xs font-semibold text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400">
                     {item.title}
                   </span>
-                  <span className="block text-xs text-slate-500 line-clamp-2">
+                  <span className="block text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
                     {item.desc}
                   </span>
                 </div>
@@ -116,12 +116,12 @@ export default function ChatWindow({
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-xs animate-pulse">
             <Sparkles className="h-4 w-4" />
           </div>
-          <div className="rounded-xl border border-slate-100 bg-slate-50/80 px-4 py-3 text-sm text-slate-500 shadow-2xs">
+          <div className="rounded-xl border border-slate-100 bg-slate-50/80 px-4 py-3 text-sm text-slate-500 shadow-2xs dark:border-slate-800/80 dark:bg-slate-900/80 dark:text-slate-400">
             <div className="flex items-center gap-2">
               <span className="inline-block h-2 w-2 rounded-full bg-blue-500 animate-bounce" />
               <span className="inline-block h-2 w-2 rounded-full bg-blue-500 animate-bounce [animation-delay:0.2s]" />
               <span className="inline-block h-2 w-2 rounded-full bg-blue-500 animate-bounce [animation-delay:0.4s]" />
-              <span className="ml-1 text-xs font-medium text-slate-400">LexBot is thinking…</span>
+              <span className="ml-1 text-xs font-medium text-slate-400 dark:text-slate-500">LexBot is thinking…</span>
             </div>
           </div>
         </div>

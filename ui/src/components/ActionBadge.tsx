@@ -23,7 +23,7 @@ export default function ActionBadge({ action }: ActionBadgeProps) {
   return (
     <span
       data-testid="action-badge"
-      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200/80 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-2xs"
+      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200/80 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-2xs dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300"
     >
       {getActionIcon(action.type)}
       <span>

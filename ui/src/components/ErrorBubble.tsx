@@ -11,8 +11,8 @@ interface ErrorBubbleProps {
 export default function ErrorBubble({ error, onRetry }: ErrorBubbleProps) {
   return (
     <div data-testid="error-bubble" role="alert" className="my-3 flex justify-start">
-      <div className="flex max-w-[85%] items-start gap-3 rounded-xl border border-red-200 bg-red-50/90 p-3.5 text-sm text-red-800 shadow-2xs">
-        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+      <div className="flex max-w-[85%] items-start gap-3 rounded-xl border border-red-200 bg-red-50/90 p-3.5 text-sm text-red-800 shadow-2xs dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
         <div className="flex-1 space-y-2">
           <p className="leading-relaxed">{error.message}</p>
           {error.retryable && (

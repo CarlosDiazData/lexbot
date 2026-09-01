@@ -31,10 +31,10 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
     return (
       <div className="flex justify-end my-3">
         <div className="flex items-start gap-2.5 max-w-[80%]">
-          <div className="rounded-2xl rounded-tr-xs bg-slate-900 px-4 py-2.5 text-sm text-white shadow-xs">
+          <div className="rounded-2xl rounded-tr-xs bg-slate-900 px-4 py-2.5 text-sm text-white shadow-xs dark:bg-blue-600">
             <p className="whitespace-pre-wrap leading-relaxed">{message.text}</p>
           </div>
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-600">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
             <User className="h-4 w-4" />
           </div>
         </div>
@@ -50,17 +50,17 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
 
       <div className="min-w-0 flex-1 space-y-3">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold text-slate-700">LexBot</span>
+          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">LexBot</span>
           <button
             type="button"
             onClick={handleCopy}
             title="Copy response"
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100"
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 group-hover:opacity-100 cursor-pointer"
           >
             {copied ? (
               <>
-                <Check className="h-3 w-3 text-emerald-600" />
-                <span className="text-emerald-600">Copied</span>
+                <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-emerald-600 dark:text-emerald-400">Copied</span>
               </>
             ) : (
               <>
@@ -71,7 +71,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           </button>
         </div>
 
-        <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-4 text-sm text-slate-800 shadow-2xs">
+        <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-4 text-sm text-slate-800 shadow-2xs dark:border-slate-800/80 dark:bg-slate-900/80 dark:text-slate-200">
           <div className="whitespace-pre-wrap leading-relaxed space-y-2">
             <p>{linkifyAnswer(message.text, sources)}</p>
           </div>
@@ -79,10 +79,10 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           {sources.length > 0 && (
             <div
               data-testid="sources-section"
-              className="mt-4 border-t border-slate-200/80 pt-3"
+              className="mt-4 border-t border-slate-200/80 pt-3 dark:border-slate-800"
             >
               <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Sources ({sources.length})
                 </span>
               </div>
@@ -97,9 +97,9 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           {actions.length > 0 && (
             <div
               data-testid="actions-section"
-              className="mt-3 border-t border-slate-200/80 pt-3"
+              className="mt-3 border-t border-slate-200/80 pt-3 dark:border-slate-800"
             >
-              <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Actions
               </span>
               <div className="flex flex-wrap gap-1.5">
