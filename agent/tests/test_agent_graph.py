@@ -132,9 +132,24 @@ def test_tool_call_routes_to_tools_and_cites_sources(tmp_path):
     assert "advance payment" in last.content.lower()
 
 
-def test_no_tool_call_declines_gracefully(tmp_path):
+def test_conversational_greeting_returns_warm_response(tmp_path):
     store = _store(tmp_path)
-    llm = FakeLLM(responses=[AIMessage(content="Hello! How can I help?")])
+    greeting_text = "Hello! I am LexBot, your legal assistant. How can I help you today?"
+    llm = FakeLLM(responses=[AIMessage(content=greeting_text)])
+    app = build_agent(llm=llm, store=store)
+    final = app.invoke({"messages": [HumanMessage(content="Hello")]})
+
+    assert final["intent"] == "conversational"
+    assert final["sources"] == []
+    assert final["actions"] == []
+    last = final["messages"][-1]
+    assert isinstance(last, AIMessage)
+    assert last.content == greeting_text
+
+
+def test_no_tool_call_empty_content_declines_gracefully(tmp_path):
+    store = _store(tmp_path)
+    llm = FakeLLM(responses=[AIMessage(content="")])
     app = build_agent(llm=llm, store=store)
     final = app.invoke({"messages": [HumanMessage(content="What is the weather in Madrid?")]})
 

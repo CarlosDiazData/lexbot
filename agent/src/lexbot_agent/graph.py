@@ -14,7 +14,13 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -24,6 +30,19 @@ from lexbot_ingest.vector_store import VectorStore
 from .llm import build_llm
 from .state import AgentState
 from .tools import build_tools
+
+LEXBOT_SYSTEM_PROMPT = (
+    "You are LexBot, a warm, helpful, empathetic, and professional legal assistant for a law firm.\n"
+    "Your purpose is to guide clients and answer questions about firm policies, legal services, "
+    "contract reviews, client FAQs, case status, and consultation options.\n\n"
+    "Guidelines:\n"
+    "- When the user greets you or starts a conversation, reply warmly in the user's language and invite them to share their legal questions or situation.\n"
+    "- When the user discusses a situation or legal problem, listen empathetically, provide helpful guidance on available options, or use your tools to retrieve knowledge or case information.\n"
+    "- Use the `retrieve_knowledge` tool whenever answering specific questions about firm policies, fees, timelines, services, or FAQs.\n"
+    "- Use the `search_case` tool when looking up specific case numbers or client matters.\n"
+    "- If the user asks for something completely outside legal assistance or the law firm (e.g. cooking recipes, general jokes, sports), politely decline and state that you specialize in legal assistance for the firm.\n"
+    "- Always maintain a respectful, reassuring, and clear tone."
+)
 
 # Tool name → intent label (AGENT-1).
 _INTENT_BY_TOOL = {
@@ -246,7 +265,9 @@ def build_agent(
     )
 
     def classify_intent(state: AgentState) -> dict:
-        response = llm.bind_tools(tools).invoke(state["messages"])
+        system_message = SystemMessage(content=LEXBOT_SYSTEM_PROMPT)
+        messages = [system_message, *state["messages"]]
+        response = llm.bind_tools(tools).invoke(messages)
         return {"messages": [response]}
 
     def should_continue(state: AgentState) -> str:
@@ -255,8 +276,19 @@ def build_agent(
     def compose_answer(state: AgentState) -> dict:
         tool_names = _tool_call_names(state)
 
-        # Out-of-scope: no tool was selected → deterministic decline.
+        # No tool called: check if the LLM provided a direct conversational response
         if not tool_names:
+            last_ai = _last_aimessage(state)
+            raw_content = last_ai.content if last_ai else ""
+            content_str = raw_content if isinstance(raw_content, str) else str(raw_content)
+            if content_str.strip():
+                return {
+                    "messages": [AIMessage(content=content_str)],
+                    "intent": "conversational",
+                    "context": [],
+                    "sources": [],
+                    "actions": [],
+                }
             return {
                 "messages": [AIMessage(content=OUT_OF_SCOPE_ANSWER)],
                 "intent": "out_of_scope",
@@ -304,9 +336,10 @@ def build_agent(
             ]
             context = "\n\n".join(f"[{r['source']}] {r['text']}" for r in results)
             prompt = (
-                "You are LexBot, a legal assistant. Answer the user's question "
-                "using ONLY the retrieved knowledge below, and cite each source "
-                "you use by its [source] tag.\n\n"
+                "You are LexBot, a warm, professional, and empathetic legal assistant for a law firm.\n"
+                "Answer the user's question clearly, helpfully, and conversationally in the user's language using ONLY the retrieved knowledge below.\n"
+                "Cite each source you use with its [source] tag.\n"
+                "Maintain a reassuring and approachable tone for the client.\n\n"
                 f"User question: {user_text}\n\n"
                 f"Retrieved knowledge:\n{context}"
             )

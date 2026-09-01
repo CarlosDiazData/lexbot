@@ -50,6 +50,9 @@ class FakePgStore(PgVectorStore):
         self._count += len(chunks)
         self.seeded = True
 
+    def validate_dimensions(self):
+        pass
+
 
 # --- _wait_for_db retry/raise (PGV-3) ----------------------------------------
 
